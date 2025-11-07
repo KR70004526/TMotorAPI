@@ -33,8 +33,7 @@ import numpy as np
 import threading
 
 try:
-    from TMotorCANControl.TMotorManager_mit_can import TMotorManager_mit_can
-    from TMotorCANControl import motor_constants as mc
+    from TMotorCANControl.mit_can import TMotorManager_mit_can
 except ImportError:
     print("Error: TMotorCANControl not installed")
     print("Run: pip install TMotorCANControl")
