@@ -82,6 +82,10 @@ class MotorConfig:
     defaultKp: float = 10.0
     defaultKd: float = 0.5
     
+    # Step command parameters
+    stepTimeout: float = 5.0        # Maximum time for step command
+    stepTolerance: float = 0.05     # Position tolerance for "reached"
+
     def __post_init__(self):
         """Validate configuration"""
         if not 0 <= self.motorId <= 127:
@@ -95,29 +99,45 @@ class CANInterface:
     """CAN interface automatic setup"""
     
     @staticmethod
-    def setup_interface(canInterface: str = 'can0', bitrate: int = 1000000) -> bool:
+    def setup_interface(canInterface: Optional[str] = None, 
+                        bitrate: Optional[int]= None,
+                        config: Optional[MotorConfig] = None) -> bool:
         """
         Setup CAN interface using system commands
         
         This is separate from TMotorManager_mit_can initialization.
         TMotorManager automatically detects the CAN interface after setup.
         """
-        if not CAN_INTERFACE_PATTERN.match(canInterface):
-            raise ValueError(f"Invalid CAN interface: {canInterface}")
+
+        if config is not None:
+            if canInterface is None:
+                _interface = config.canInterface
+            if bitrate is None:
+                _bitrate = config.bitrate
+        else:
+            if canInterface is None:
+                _interface = 'can0'
+            if bitrate is None:
+                _bitrate = 1000000
+
+        if not CAN_INTERFACE_PATTERN.match(_interface):
+            raise ValueError(f"Invalid CAN interface: {_interface}")
         
         try:
-            subprocess.run(['sudo', 'ip', 'link', 'set', canInterface, 'down'],
+            subprocess.run(['sudo', 'ip', 'link', 'set', _interface, 'down'],
                          check=True, capture_output=True)
-            subprocess.run(['sudo', 'ip', 'link', 'set', canInterface,
-                          'type', 'can', 'bitrate', str(bitrate)],
+            subprocess.run(['sudo', 'ip', 'link', 'set', _interface,
+                          'type', 'can', 'bitrate', str(_bitrate)],
                          check=True, capture_output=True)
-            subprocess.run(['sudo', 'ip', 'link', 'set', canInterface, 'up'],
+            subprocess.run(['sudo', 'ip', 'link', 'set', _interface, 'up'],
                          check=True, capture_output=True)
             
-            logging.info(f"✓ CAN {canInterface} ready (bitrate: {bitrate})")
+            logging.info(f"✓ CAN {_interface} ready (bitrate: {_bitrate})")
             return True
         except subprocess.CalledProcessError as e:
-            logging.error(f"Failed to setup CAN: {e}")
+            # stderr 디코딩해 주면 디버깅 좋음
+            err = getattr(e, "stderr", b"")
+            logging.error(f"Failed to setup CAN: {err.decode(errors='ignore')}")
             return False
 
 
@@ -185,14 +205,14 @@ class Motor:
     
     Example:
         # Method 1: Direct parameters
-        motor = Motor('AK80-10', motorId=2, autoInit=True)
+        motor = Motor('AK80-9', motorId=2, autoInit=True)
         
         # Method 2: Config object
-        config = MotorConfig(motorType='AK80-10', motorId=2, maxTemperature=80)
+        config = MotorConfig(motorType='AK80-9', motorId=2, maxTemperature=80)
         motor = Motor(config=config)
         
         # Method 3: Context manager
-        with Motor('AK80-10', motorId=2) as motor:
+        with Motor('AK80-9', motorId=2) as motor:
             motor.track_trajectory(1.57, 2.0)
     """
     
@@ -253,7 +273,7 @@ class Motor:
         
         # Setup CAN interface (separate from TMotorManager)
         if self.config.autoInit:
-            CANInterface.setup_interface(self.config.canInterface, self.config.bitrate)
+            CANInterface.setup_interface(config=self.config)
         
         # Initialize TMotorManager with CORRECT signature
         try:
@@ -414,13 +434,32 @@ class Motor:
             self._controlModeSet = True
             
             if duration <= STEP_COMMAND_THRESHOLD:
-                # Step position
                 logging.info(f"Step: {self._lastPosition:.3f} → {targetPos:.3f} rad")
                 
-                self._manager.position = targetPos
-                self.update()
+                startTime = time.time()
+                timeout = self.config.stepTimeout
+                tolerance = self.config.stepTolerance
                 
-                logging.info(f"  ✓ Reached: {self._lastPosition:.3f} rad")
+                # 계속 명령 전송! (FIX!)
+                while time.time() - startTime < timeout:
+                    self._manager.position = targetPos
+                    self.update()
+                    
+                    # 목표 도달 확인
+                    error = abs(self._lastPosition - targetPos)
+                    if error < tolerance:
+                        elapsed = time.time() - startTime
+                        logging.info(f"  ✓ Reached in {elapsed:.2f}s: {self._lastPosition:.3f} rad")
+                        logging.info(f"    Error: {error:.4f} rad")
+                        return
+                    
+                    time.sleep(CONTROL_LOOP_PERIOD)
+                
+                # Timeout
+                error = abs(self._lastPosition - targetPos)
+                logging.warning(f"  ⚠ Timeout ({timeout}s)!")
+                logging.warning(f"    Target: {targetPos:.3f}, Current: {self._lastPosition:.3f}")
+                logging.warning(f"    Error: {error:.3f} rad")
                 return
             
             # Trajectory
@@ -565,29 +604,10 @@ class Motor:
         
         try:
             logging.info("Zeroing...")
-            self._manager.zero_position()
+            self._manager.set_zero_position()
             time.sleep(ZERO_POSITION_SETTLE_TIME)
             self.update()
             logging.info(f"  ✓ Zeroed at {self._lastPosition:.3f} rad")
         except Exception as e:
             logging.error(f"Zero failed: {e}")
             raise
-
-
-if __name__ == "__main__":
-    print("TMotor Control API v4.2 - CORRECT TMotorManager Signature")
-    print("=" * 70)
-    print()
-    print("✅ FIXED: TMotorManager_mit_can has NO CAN_bus parameter!")
-    print()
-    print("Actual TMotorManager_mit_can.__init__:")
-    print("  motor_type='AK80-9'")
-    print("  motor_ID=1")
-    print("  max_mosfett_temp=50")
-    print("  CSV_file=None")
-    print("  log_vars=LOG_VARIABLES")
-    print()
-    print("CAN interface is set up SEPARATELY via:")
-    print("  CANInterface.setup_interface('can0', 1000000)")
-    print()
-    print("✓ Ready to use!")
