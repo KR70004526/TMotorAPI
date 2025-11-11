@@ -439,12 +439,10 @@ class Motor:
                 timeout = self.config.stepTimeout
                 tolerance = self.config.stepTolerance
                 
-                # 계속 명령 전송! (FIX!)
                 while time.time() - startTime < timeout:
                     self._manager.position = targetPos
                     self.update()
                     
-                    # 목표 도달 확인
                     error = abs(self._lastPosition - targetPos)
                     if error < tolerance:
                         elapsed = time.time() - startTime
@@ -539,26 +537,26 @@ class Motor:
             raise
     
     def set_torque(self,
-                  targetTorque: float,
+                  targetTor: float,
                   duration: float = 0.0) -> None:
         """Torque control"""
         if not self._isEnabled or self._manager is None:
             raise RuntimeError("Motor not enabled")
         
         try:
-            logging.info(f"Torque: {targetTorque:.3f} Nm")
+            logging.info(f"Torque: {targetTor:.3f} Nm")
             
             # Set control mode
             self._manager.set_current_gains()
             self._controlModeSet = True
             
             if duration <= 0:
-                self._manager.torque = targetTorque
+                self._manager.torque = targetTor
                 self.update()
             else:
                 t0 = time.time()
                 while time.time() - t0 < duration:
-                    self._manager.torque = targetTorque
+                    self._manager.torque = targetTor
                     self.update()
                     time.sleep(CONTROL_LOOP_PERIOD)
                 
@@ -576,7 +574,7 @@ class Motor:
                     targetPos: float,
                     kp: float,
                     kd: float,
-                    feedforwardTorque: float = 0.0) -> None:
+                    fftor: float = 0.0) -> None:
         """Low-level impedance control"""
         if not self._isEnabled or self._manager is None:
             raise RuntimeError("Motor not enabled")
@@ -586,7 +584,7 @@ class Motor:
             self._controlModeSet = True
             
             self._manager.position = targetPos
-            self._manager.torque = feedforwardTorque
+            self._manager.torque = fftor
             
             self.update()
             
