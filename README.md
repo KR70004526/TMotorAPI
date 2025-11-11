@@ -96,7 +96,6 @@ motor.enable()  # Power ON - Motor can move now
 print(f"Power status: {motor.is_power_on()}")  # True
 
 motor.track_trajectory(1.57)
-motor.set_velocity(2.0)
 
 motor.disable()  # Power OFF
 print(f"Power status: {motor.is_power_on()}")  # False
@@ -135,7 +134,7 @@ with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
 - `kp`: Position gain (Nm/rad) - Higher = stiffer
 - `kd`: Velocity gain (Nm/(rad/s)) - Higher = more damped
 - `duration`: Motion time (s) - 0 for immediate, >0 for trajectory
-- `trajectory_type`: 'minimum_jerk', 'cubic', 'linear', 'trapezoidal'
+- `trajectory_type`: 'minimum_jerk', 'cubic', 'linear'
 
 ### Mode 2: Velocity Control
 
@@ -151,23 +150,13 @@ with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
     motor.set_velocity(0.0)
 ```
 
-**For velocity + FF torque:**
-```python
-motor.send_command(
-    position=motor.position,
-    velocity=2.0,
-    kp=0, kd=5.0,
-    torque=gravity_compensation
-)
-```
-
 ### Mode 3: Torque Control
 
 Pure torque control without position/velocity feedback.
 
 ```python
 with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    # Gravity compensation
+    # Operating torque
     motor.set_torque(3.5)
     
     # Remove torque (free motion)
@@ -180,10 +169,9 @@ Full manual control of all parameters (expert mode).
 
 ```python
 with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    # Velocity + FF torque
+    # Position + FF torque
     motor.send_command(
         position=motor.position,
-        velocity=2.0,
         kp=0, kd=5.0,
         torque=gravity_comp
     )
