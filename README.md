@@ -1,19 +1,20 @@
-# TMotor Control API v2.0
+# TMotor Control API
 
-Professional control library for AK-series TMotors (MIT CAN protocol)
+A high-level Python library for controlling AK-series T-Motors using the MIT CAN protocol.
 
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 🌟 Features
 
+- **Simple & Intuitive API**: Easy-to-use high-level interface built on TMotorCANControl
 - **4 Control Modes**: Trajectory, Velocity, Torque, and Impedance control
-- **Simple API**: Easy-to-use high-level interface
-- **Context Manager**: Automatic power management
-- **Multi-Motor Support**: Synchronized control of multiple motors
+- **Context Manager Support**: Automatic power management with Python's `with` statement
+- **Multi-Motor Control**: Synchronize multiple motors with `MotorGroup`
+- **Type Hints**: Full type annotations for better IDE support
+- **Detailed Logging**: Comprehensive operation logs for debugging
 - **Power Monitoring**: Track motor uptime and connection status
-- **Type Hints**: Full type annotation for better IDE support
-- **Comprehensive Logging**: Detailed operation logs
+- **Auto CAN Setup**: Automatic CAN interface initialization (optional)
 
 ## 📋 Table of Contents
 
@@ -24,6 +25,7 @@ Professional control library for AK-series TMotors (MIT CAN protocol)
 - [Examples](#examples)
 - [FAQ](#faq)
 - [Troubleshooting](#troubleshooting)
+- [Acknowledgments](#acknowledgments)
 
 ## 🚀 Installation
 
@@ -33,11 +35,13 @@ Professional control library for AK-series TMotors (MIT CAN protocol)
 # Install TMotorCANControl library
 pip install TMotorCANControl
 
-# Setup CAN interface (one-time)
+# Install CAN utilities (Linux)
 sudo apt-get install can-utils
 ```
 
-### Setup Sudo Permission (Recommended)
+### Setup Sudo Permissions (Recommended)
+
+To allow automatic CAN interface setup without password prompts:
 
 ```bash
 sudo visudo
@@ -45,11 +49,15 @@ sudo visudo
 your_username ALL=(ALL) NOPASSWD: /sbin/ip
 ```
 
-### Install This Library
+### Install TMotorAPI
 
 ```bash
-# Just copy tmotor_control_final.py to your project
-cp tmotor_control_final.py your_project/
+# Clone the repository
+git clone https://github.com/KR70004526/TMotorAPI.git
+cd TMotorAPI
+
+# Copy to your project
+cp src/TMotorAPI.py your_project/
 ```
 
 ## ⚡ Quick Start
@@ -57,33 +65,33 @@ cp tmotor_control_final.py your_project/
 ### Basic Usage
 
 ```python
-from tmotor_control_final import Motor
+from TMotorAPI import Motor
 
 # Create and use motor with context manager (recommended)
 with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    # Motor is powered ON here
+    # Motor is powered on inside this block
     motor.track_trajectory(1.57)  # Move to 1.57 rad
-    # Motor is automatically powered OFF when exiting
+    # Motor is automatically powered off when exiting
 ```
 
 ### Understanding Power Management
 
-**IMPORTANT**: The motor power works in two stages:
+**Important**: Motor power operates in 2 stages:
 
 1. **Object Creation** (Connection, Power OFF)
 ```python
 motor = Motor('AK80-64', motor_id=2, auto_init=True)
 # TMotorManager object created
 # CAN connection established
-# Motor power is still OFF (motor won't move)
+# Motor power is still OFF (motor won't move yet)
 ```
 
 2. **Enable/With Block** (Power ON)
 ```python
 with motor as m:  # __enter__() called → enable() → Power ON
-    # Motor is powered ON now
+    # Motor is now powered and ready to move
     m.track_trajectory(1.57)
-    # Power remains ON throughout the with block
+    # Power remains on throughout the with block
 # __exit__() called → disable() → Power OFF
 ```
 
@@ -92,10 +100,11 @@ with motor as m:  # __enter__() called → enable() → Power ON
 ```python
 motor = Motor('AK80-64', motor_id=2, auto_init=True)
 
-motor.enable()  # Power ON - Motor can move now
+motor.enable()  # Power ON - motor can now move
 print(f"Power status: {motor.is_power_on()}")  # True
 
 motor.track_trajectory(1.57)
+motor.set_velocity(2.0)
 
 motor.disable()  # Power OFF
 print(f"Power status: {motor.is_power_on()}")  # False
@@ -108,422 +117,437 @@ print(f"Power status: {motor.is_power_on()}")  # False
 | Mode | Function | Use Case |
 |------|----------|----------|
 | **1. Trajectory** | `track_trajectory()` | Position control, smooth motion |
-| **2. Velocity** | `set_velocity()` | Constant velocity rotation |
+| **2. Velocity** | `set_velocity()` | Constant speed rotation |
 | **3. Torque** | `set_torque()` | Force control, gravity compensation |
-| **4. Impedance** | `send_command()` | Low-level full control (expert) |
+| **4. Impedance** | `set_impedance()` | Compliant interaction, stiffness control |
 
-### Mode 1: Trajectory Control
+### Mode Details
 
-Position control with automatic trajectory generation.
-
-```python
-with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    # Immediate move (step position)
-    motor.track_trajectory(1.57)
-    
-    # Smooth trajectory (2 seconds)
-    motor.track_trajectory(1.57, duration=2.0)
-    
-    # Adjust stiffness
-    motor.track_trajectory(1.57, kp=50, kd=2.0)  # Stiff
-    motor.track_trajectory(1.57, kp=5, kd=0.3)   # Compliant
-```
-
-**Parameters:**
-- `position`: Target position (rad)
-- `kp`: Position gain (Nm/rad) - Higher = stiffer
-- `kd`: Velocity gain (Nm/(rad/s)) - Higher = more damped
-- `duration`: Motion time (s) - 0 for immediate, >0 for trajectory
-- `trajectory_type`: 'minimum_jerk', 'cubic', 'linear'
-
-### Mode 2: Velocity Control
-
-Constant velocity rotation (no feedforward torque).
+#### 1. Trajectory Control
+Position tracking with velocity control.
 
 ```python
-with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    # Rotate at 2 rad/s
-    motor.set_velocity(2.0)
-    time.sleep(10)
-    
-    # Stop
-    motor.set_velocity(0.0)
+motor.track_trajectory(
+    position=1.57,      # Target position (rad)
+    velocity=2.0,       # Target velocity (rad/s)
+    kp=50.0,           # Position gain (Nm/rad)
+    kd=2.0             # Velocity gain (Nm/(rad/s))
+)
+
+# Check if target reached
+if motor.is_at_target(tolerance=0.01):  # Within 0.01 rad
+    print("Target reached!")
 ```
 
-### Mode 3: Torque Control
+**When to use**: Precise positioning tasks, trajectory following
 
-Pure torque control without position/velocity feedback.
+#### 2. Velocity Control
+Direct velocity command.
 
 ```python
-with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    # Operating torque
-    motor.set_torque(3.5)
-    
-    # Remove torque (free motion)
-    motor.set_torque(0.0)
+motor.set_velocity(
+    velocity=3.0,      # Target velocity (rad/s)
+    torque_limit=5.0   # Maximum torque (Nm)
+)
 ```
 
-### Mode 4: Impedance Control (Low-level)
+**When to use**: Continuous rotation, speed-based tasks
 
-Full manual control of all parameters (expert mode).
+#### 3. Torque Control
+Direct torque/force control.
 
 ```python
-with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    # Position + FF torque
-    motor.send_command(
-        position=motor.position,
-        kp=0, kd=5.0,
-        torque=gravity_comp
-    )
-    
-    # MPC controller integration
-    for _ in range(1000):
-        p, v, kp, kd, tau = mpc.compute()
-        motor.send_command(p, v, kp, kd, tau)
-        time.sleep(0.01)
+motor.set_torque(
+    torque=2.5         # Desired torque (Nm)
+)
 ```
+
+**When to use**: Force control, gravity compensation, haptics
+
+#### 4. Impedance Control
+Virtual spring-damper system.
+
+```python
+motor.set_impedance(
+    position=0.0,      # Equilibrium position (rad)
+    kp=30.0,          # Stiffness (Nm/rad)
+    kd=1.0            # Damping (Nm/(rad/s))
+)
+```
+
+**When to use**: Human-robot interaction, compliant manipulation
 
 ## 📚 API Reference
 
 ### Motor Class
 
-#### Initialization
+#### Constructor
 
 ```python
-Motor(motor_type='AK80-64', motor_id=1, can_interface='can0', 
-      auto_init=False, config=None)
+Motor(
+    motor_type: str,           # Motor model ('AK80-64', 'AK80-9', 'AK80-10', 'AK70-10')
+    motor_id: int = 1,         # CAN ID (1-32)
+    can_interface: str = 'can0',  # CAN interface name
+    auto_init: bool = True,    # Auto initialize CAN interface
+    bitrate: int = 1000000,    # CAN bitrate (default: 1Mbps)
+    max_temperature: float = 50.0  # Max safe temperature (°C)
+)
 ```
 
-**Parameters:**
-- `motor_type`: Motor model ('AK80-64', 'AK80-9', etc.)
-- `motor_id`: CAN ID (1-32)
-- `can_interface`: CAN interface name ('can0', 'can1', etc.)
-- `auto_init`: If True, calls initialize() automatically
-- `config`: MotorConfig object for advanced settings
-
-#### Power Management
+#### Configuration Object
 
 ```python
-motor.enable()   # Power ON
-motor.disable()  # Power OFF
-motor.is_power_on()  # Check power status
-motor.get_uptime()   # Get time since power on
+from TMotorAPI import MotorConfig
+
+config = MotorConfig(
+    motorType='AK80-64',
+    motorId=2,
+    canInterface='can0',
+    bitrate=1000000,
+    autoInit=True,
+    maxTemperature=50.0
+)
+
+motor = Motor(config=config)
 ```
 
 #### Control Methods
 
 ```python
 # Trajectory control
-motor.track_trajectory(position, kp=10, kd=0.5, duration=0.0, 
-                      trajectory_type='minimum_jerk')
+motor.track_trajectory(position, velocity=0.0, kp=None, kd=None)
 
 # Velocity control
-motor.set_velocity(velocity, kd=5.0)
+motor.set_velocity(velocity, torque_limit=None)
 
 # Torque control
 motor.set_torque(torque)
 
-# Low-level control
-motor.send_command(position, velocity, kp, kd, torque=0.0)
+# Impedance control
+motor.set_impedance(position=0.0, kp=None, kd=None)
+
+# Zero position
+motor.set_zero_position()
 ```
 
-#### Utility Methods
+#### State Methods
 
 ```python
-motor.update()          # Read motor state
-motor.zero_position()   # Set current position as zero
-motor.check_connection()  # Check if motor is responding
+# Get current state
+state = motor.update()  # Returns dict with position, velocity, torque, temperature
+
+# Access cached state
+pos = motor.position
+vel = motor.velocity
+temp = motor.temperature
+
+# Check status
+motor.is_power_on()
+motor.is_at_target(tolerance=0.01)
+motor.get_uptime()  # Time since enable() was called
 ```
 
-#### Properties
+#### Power Management
 
 ```python
-motor.position       # Current position (rad)
-motor.velocity       # Current velocity (rad/s)
-motor.torque         # Current torque (Nm)
-motor.temperature    # Current temperature (°C)
-motor.is_enabled     # Power status
+motor.enable()   # Power on
+motor.disable()  # Power off
+
+# Context manager (automatic power management)
+with motor:
+    # Motor powered on
+    pass
+# Motor powered off
 ```
 
 ### MotorGroup Class
 
+Control multiple motors synchronously.
+
 ```python
+from TMotorAPI import MotorGroup
+
 # Create motor group
-motors = MotorGroup([
-    ('AK80-64', 1),
-    ('AK80-64', 2),
-    ('AK80-9', 3)
+group = MotorGroup([
+    Motor('AK80-64', motor_id=1),
+    Motor('AK80-64', motor_id=2),
+    Motor('AK80-9', motor_id=3)
 ])
 
-# Use with context manager
-with motors:
-    # Synchronized motion
-    motors.track_all_trajectory([1.57, 0.0, -1.57], duration=2.0)
+# Enable all motors
+with group:
+    # Set trajectory for all motors
+    group.track_trajectory_all([0.0, 1.57, 3.14])
     
-    # Individual control
-    motors[0].set_velocity(2.0)
-    motors[1].track_trajectory(1.0)
+    # Set different velocities
+    group.set_velocity_all([1.0, 2.0, 1.5])
+    
+    # Update all motors
+    states = group.update_all()
+    print(states[0]['position'])  # First motor position
 ```
 
 ## 💡 Examples
 
-### Example 1: Basic Position Control
+### Example 1: Simple Position Control
 
 ```python
-from tmotor_control_final import Motor
+from TMotorAPI import Motor
+import time
 
-with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    # Move to 1.57 rad
-    motor.track_trajectory(1.57)
+with Motor('AK80-64', motor_id=1, auto_init=True) as motor:
+    # Move to 90 degrees
+    motor.track_trajectory(1.57)  # π/2 rad
     time.sleep(2)
     
-    # Return to 0
+    # Move to -90 degrees
+    motor.track_trajectory(-1.57)
+    time.sleep(2)
+    
+    # Return to zero
     motor.track_trajectory(0.0)
 ```
 
-### Example 2: Smooth Trajectory
+### Example 2: Velocity Control with Monitoring
 
 ```python
-with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    # 5 second smooth motion
-    motor.track_trajectory(3.14, duration=5.0)
-```
+from TMotorAPI import Motor
+import time
 
-### Example 3: Velocity Control
+motor = Motor('AK80-9', motor_id=2, auto_init=True)
+motor.enable()
 
-```python
-with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    # Rotate for 10 seconds
-    motor.set_velocity(2.0)
-    time.sleep(10)
-    motor.set_velocity(0.0)
-```
-
-### Example 4: Multiple Motors
-
-```python
-from tmotor_control_final import MotorGroup
-
-motors = MotorGroup([
-    ('AK80-64', 1),
-    ('AK80-64', 2),
-    ('AK80-9', 3)
-])
-
-with motors:
-    # Move all together
-    motors.track_all_trajectory([1.57, 0.0, -1.57], duration=2.0)
+try:
+    # Rotate at 3 rad/s for 5 seconds
+    motor.set_velocity(3.0)
     
-    # Check positions
-    print(f"Positions: {motors.get_positions()}")
-```
-
-### Example 5: Power Status Monitoring
-
-```python
-with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    print(f"Power ON: {motor.is_power_on()}")  # True
-    print(f"Uptime: {motor.get_uptime():.2f}s")
-    
-    motor.track_trajectory(1.57)
-    
-    print(f"Still ON: {motor.is_power_on()}")  # True
-    print(f"Uptime: {motor.get_uptime():.2f}s")
-
-# After with block
-print(f"Power OFF: {motor.is_power_on()}")  # False
-```
-
-### Example 6: MPC Integration
-
-```python
-from your_mpc_library import MPCController
-
-mpc = MPCController()
-
-with Motor('AK80-64', motor_id=2, auto_init=True) as motor:
-    for _ in range(1000):
-        # Compute optimal control
-        p, v, kp, kd, tau = mpc.compute(
-            current_state=motor.position,
-            target_state=1.57
-        )
+    for _ in range(50):  # 5 seconds at 10Hz
+        state = motor.update()
+        print(f"Velocity: {state['velocity']:.2f} rad/s, "
+              f"Temperature: {state['temperature']:.1f}°C")
+        time.sleep(0.1)
         
-        # Apply control
-        motor.send_command(p, v, kp, kd, tau)
+finally:
+    motor.disable()
+```
+
+### Example 3: Multi-Motor Synchronized Control
+
+```python
+from TMotorAPI import MotorGroup, Motor
+import numpy as np
+import time
+
+# Create 3 motors
+motors = [
+    Motor('AK80-64', motor_id=1),
+    Motor('AK80-64', motor_id=2),
+    Motor('AK80-64', motor_id=3)
+]
+
+group = MotorGroup(motors)
+
+with group:
+    # Sinusoidal trajectory
+    t = 0
+    while t < 10:  # 10 seconds
+        positions = [
+            np.sin(2 * np.pi * 0.5 * t),      # Motor 1: 0.5 Hz
+            np.sin(2 * np.pi * 0.5 * t + np.pi/3),  # Motor 2: phase shifted
+            np.sin(2 * np.pi * 0.5 * t + 2*np.pi/3) # Motor 3: phase shifted
+        ]
         
-        time.sleep(0.01)
+        group.track_trajectory_all(positions)
+        time.sleep(0.01)  # 100 Hz control loop
+        t += 0.01
+```
+
+### Example 4: Impedance Control for Compliance
+
+```python
+from TMotorAPI import Motor
+import time
+
+with Motor('AK70-10', motor_id=1, auto_init=True) as motor:
+    # Set up soft virtual spring at position 0
+    motor.set_impedance(
+        position=0.0,
+        kp=10.0,   # Low stiffness = soft spring
+        kd=0.5     # Low damping = less resistance
+    )
+    
+    # Let user move the motor manually
+    print("Try moving the motor manually...")
+    for _ in range(100):
+        state = motor.update()
+        print(f"Position: {state['position']:.3f} rad, "
+              f"Torque: {state['torque']:.3f} Nm")
+        time.sleep(0.1)
+```
+
+### Example 5: Temperature Monitoring
+
+```python
+from TMotorAPI import Motor
+import time
+
+motor = Motor('AK80-64', motor_id=1, auto_init=True, max_temperature=45.0)
+
+with motor:
+    motor.set_velocity(5.0)  # High speed
+    
+    while True:
+        state = motor.update()
+        temp = state['temperature']
+        
+        print(f"Temperature: {temp:.1f}°C")
+        
+        # Automatic safety check (built-in)
+        if temp > motor._config.maxTemperature:
+            print("WARNING: Temperature limit exceeded!")
+            break
+            
+        time.sleep(1.0)
 ```
 
 ## ❓ FAQ
 
-### Q1: When is the motor actually powered on?
+### Q: What motors are supported?
 
-**A:** The motor is powered on when `enable()` is called or when entering a `with` block:
+**A:** Currently supports AK-series motors with MIT CAN protocol:
+- AK80-64 (high torque)
+- AK80-9 (balanced)
+- AK80-10 (high speed)
+- AK70-10 (compact)
 
-```python
-motor = Motor(..., auto_init=True)  # Connected, but power OFF
-motor.enable()  # NOW power is ON
-```
+### Q: Can I control multiple motors on different CAN interfaces?
 
-```python
-with Motor(...) as motor:  # Power ON here
-    pass  # Power OFF here
-```
-
-### Q2: How long does the power stay on?
-
-**A:** The power stays on until:
-1. `disable()` is called, or
-2. The `with` block exits
+**A:** Yes! Specify different `can_interface` for each motor:
 
 ```python
-with motor:
-    # Power ON throughout this entire block
-    motor.track_trajectory(1.57)
-    time.sleep(10)
-    motor.set_velocity(2.0)
-    time.sleep(20)
-    # Power still ON here
-# Power OFF when exiting
+motor1 = Motor('AK80-64', motor_id=1, can_interface='can0')
+motor2 = Motor('AK80-9', motor_id=1, can_interface='can1')
 ```
 
-### Q3: What's the difference between `auto_init=True` and `auto_init=False`?
+### Q: Do I need to call `update()` regularly?
+
+**A:** Yes, for continuous control. The control methods send commands, but `update()` reads motor feedback:
+
+```python
+while running:
+    motor.track_trajectory(target_pos)
+    state = motor.update()  # Get latest feedback
+    time.sleep(0.01)  # 100 Hz recommended
+```
+
+### Q: How do I handle motor errors?
+
+**A:** The API includes error handling and logging:
+
+```python
+try:
+    with motor:
+        motor.set_velocity(10.0)
+        state = motor.update()
+        
+        if not state:  # Empty dict means error
+            print("Communication error!")
+            
+except Exception as e:
+    print(f"Error: {e}")
+finally:
+    motor.disable()  # Always safe to call
+```
+
+### Q: What's the difference between `track_trajectory()` and `set_impedance()`?
 
 **A:**
-- `auto_init=True`: Creates TMotorManager object immediately (connects to motor, power OFF)
-- `auto_init=False`: TMotorManager created on first `enable()` call
+- `track_trajectory()`: Active position tracking (stiff, precise)
+- `set_impedance()`: Passive compliance (soft, interactive)
 
-Both result in power OFF initially. Power only turns ON with `enable()` or `with` block.
-
-### Q4: Can I use `enable()` and `with` together?
-
-**A:** Not recommended! This will call `enable()` twice:
-
-```python
-# ❌ Don't do this
-motor = Motor(...)
-motor.enable()  # First enable
-with motor:     # Second enable (bad!)
-    pass
-```
-
-**✅ Choose one:**
-```python
-# Method 1: Manual
-motor.enable()
-motor.track_trajectory(1.57)
-motor.disable()
-
-# Method 2: Context manager (recommended)
-with motor:
-    motor.track_trajectory(1.57)
-```
-
-### Q5: How do I check if the motor is still powered on?
-
-**A:** Use these methods:
-```python
-motor.is_power_on()      # True if powered on
-motor.get_uptime()       # Seconds since power on
-motor.check_connection() # Check if responding
-```
+Use trajectory for precise positioning, impedance for safe interaction.
 
 ## 🔧 Troubleshooting
 
-### Motor not responding
-
-```python
-# Check connection
-if not motor.check_connection():
-    print("Motor not responding!")
-    motor.disable()
-    time.sleep(1)
-    motor.enable()
-```
-
-### Excessive vibration
-
-```python
-# Increase damping (kd)
-motor.track_trajectory(1.57, kp=10, kd=2.0)  # Higher kd
-```
-
-### Too compliant
-
-```python
-# Increase stiffness (kp)
-motor.track_trajectory(1.57, kp=50, kd=2.0)  # Higher kp
-```
-
-### CAN interface not found
+### CAN Interface Not Found
 
 ```bash
-# Check interface
+# Check if interface exists
 ip link show can0
 
-# Bring up manually
-sudo ip link set can0 up type can bitrate 1000000
+# If not, add Device Tree Overlay (Raspberry Pi)
+sudo nano /boot/config.txt
+# Add: dtoverlay=mcp2515-can0,oscillator=8000000,interrupt=25
+
+# Reboot
+sudo reboot
 ```
 
-### Permission denied
+### Motor Not Responding
+
+1. **Check power**: Verify motor power supply (24-48V depending on model)
+2. **Check CAN bus**: Ensure proper termination resistors (120Ω at each end)
+3. **Check ID**: Verify motor CAN ID matches code
+4. **Check enable**: Make sure `enable()` was called or using `with` statement
+
+```python
+# Debug mode
+logging.basicConfig(level=logging.DEBUG)
+motor = Motor('AK80-64', motor_id=1)
+```
+
+### Permission Denied
 
 ```bash
-# Setup sudo permission (see Installation section)
-sudo visudo
-# Add: your_username ALL=(ALL) NOPASSWD: /sbin/ip
+# Add user to CAN group
+sudo usermod -a -G dialout $USER
+
+# Or run with sudo (not recommended)
+sudo python3 your_script.py
 ```
 
-## 📝 Gain Tuning Guide
+### High Temperature Warning
 
-| Purpose | Kp | Kd | Characteristics |
-|---------|----|----|-----------------|
-| Precision control | 50 | 2.0 | Stiff, accurate |
-| General control | 10 | 0.5 | Default, balanced |
-| Safe interaction | 5 | 0.3 | Compliant, soft |
-| Velocity control | 0 | 5.0 | Position control OFF |
-| Torque control | 0 | 0 | All feedback OFF |
+- Reduce load or duty cycle
+- Improve cooling (add heatsink/fan)
+- Lower `max_temperature` threshold for earlier warning
 
-**Tuning tips:**
-- Vibration → Increase Kd
-- Too soft → Increase Kp
-- Overshoot → Increase Kd
-- Slow response → Increase Kp
-
-## 🎓 Control Theory
-
-All control modes use the same impedance control equation:
+## 🏗️ Architecture
 
 ```
-τ = Kp × (pos_target - pos_actual) + 
-    Kd × (vel_target - vel_actual) + 
-    τ_feedforward
+User Application
+       ↓
+   TMotorAPI (This library)
+       ↓ wraps
+TMotorCANControl (Low-level)
+       ↓
+   CAN Bus
+       ↓
+   T-Motor
 ```
 
-Each mode is just a different combination of these 5 parameters:
+**Design Philosophy:**
+- **TMotorCANControl**: Direct CAN protocol implementation (low-level)
+- **TMotorAPI**: High-level abstractions and safety features (user-friendly)
 
-| Mode | pos_target | vel_target | Kp | Kd | τ_ff |
-|------|------------|------------|----|----|------|
-| Position | target | 0 | ✓ | ✓ | 0 |
-| Velocity | current | target | 0 | ✓ | 0 |
-| Torque | 0 | 0 | 0 | 0 | ✓ |
-| Impedance | ✓ | ✓ | ✓ | ✓ | ✓ |
+## 📝 License
 
-## 📄 License
-
-MIT License - See LICENSE file for details
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📧 Contact
-
-For issues and questions, please open an issue on GitHub.
+MIT License - See [LICENSE](LICENSE) file for details
 
 ## 🙏 Acknowledgments
 
-Based on [TMotorCANControl](https://github.com/neurobionics/TMotorCANControl) by Neurobionics Lab
+This library is built on [TMotorCANControl](https://github.com/neurobionics/TMotorCANControl) by the Neurobionics Lab.
+
+Special thanks to:
+- [Neurobionics Lab](https://github.com/neurobionics) for the underlying CAN control library
+- MIT for the open CAN protocol specification
+- T-Motor for excellent motor hardware
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/KR70004526/TMotorAPI/issues)
+- **Documentation**: [Wiki](https://github.com/KR70004526/TMotorAPI/wiki)
+- **Base Library**: [TMotorCANControl Docs](https://github.com/neurobionics/TMotorCANControl)
 
 ---
 
