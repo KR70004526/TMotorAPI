@@ -1,12 +1,12 @@
 """
-TMotor Control API v4.3 - With Settling Time for Step Commands
+TMotor Control API v5.0 - Non-blocking Control
 Based on TMotorCANControl by Neurobionics Lab
 
-Critical Improvements (v4.3):
-- Added settling time logic for step commands to prevent premature return
-- Prevents drift when using feedforward torque in step commands
-- Position must stay within tolerance for N consecutive cycles before returning
-- More robust step command behavior
+Changes from v4.3:
+- Removed duration parameter from set_* methods (non-blocking design)
+- Removed unused variables (stepTimeout, stepTolerance, stepSettlingTime)
+- Fixed zero_position() causing unwanted movement
+- Added stop() method for emergency stop
 
 Author: TMotor Control Team
 License: MIT
@@ -18,10 +18,9 @@ import time
 import subprocess
 import logging
 import re
-from typing import Optional, Dict, List, Tuple, Union
+from typing import Optional, Dict, Tuple
 from dataclasses import dataclass
 import numpy as np
-import threading
 
 try:
     from TMotorCANControl.mit_can import TMotorManager_mit_can
@@ -32,10 +31,7 @@ except ImportError:
 
 
 # ==================== Constants ====================
-CONTROL_LOOP_FREQUENCY = 100  # Hz
-CONTROL_LOOP_PERIOD = 1.0 / CONTROL_LOOP_FREQUENCY
-STEP_COMMAND_THRESHOLD = 0.02
-ZERO_POSITION_SETTLE_TIME = 0.5
+ZERO_POSITION_SETTLE_TIME = 1.0  # 영점 설정 후 대기 시간 (EEPROM 저장)
 CAN_INTERFACE_PATTERN = re.compile(r'^can\d+$')
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
@@ -45,41 +41,28 @@ logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 @dataclass
 class MotorConfig:
     """
-    Motor configuration with camelCase naming
+    Motor configuration
     
     Attributes:
         motorType: Motor model (e.g., 'AK80-64', 'AK80-9', 'AK70-10')
         motorId: CAN ID (0-127)
-        canInterface: CAN interface name for setup (e.g., 'can0')
-        bitrate: CAN bitrate for setup (default: 1000000)
+        canInterface: CAN interface name (e.g., 'can0', 'can1')
+        bitrate: CAN bitrate (default: 1000000)
         autoInit: Auto initialize CAN interface
         maxTemperature: Maximum safe MOSFET temperature (°C)
         defaultKp: Default position gain (Nm/rad)
         defaultKd: Default velocity gain (Nm/(rad/s))
-        defaultTorqueLimit: Default torque limit (Nm)
-        stepTimeout: Maximum time for step command (s)
-        stepTolerance: Position tolerance for "reached" (rad)
-        stepSettlingTime: Time to stay within tolerance before confirming arrival (s)
-    
-    Note:
-        canInterface is only used for CANInterface.setup_interface()
-        TMotorManager_mit_can automatically detects CAN interface
     """
     motorType: str = 'AK70-10'
     motorId: int = 1
-    canInterface: str = 'can0'  # Only for setup, not passed to TMotorManager
+    canInterface: str = 'can0'
     bitrate: int = 1000000
     autoInit: bool = True
-    maxTemperature: float = 50.0  # Maps to max_mosfett_temp
+    maxTemperature: float = 50.0
     
     # Default control gains
     defaultKp: float = 10.0
     defaultKd: float = 0.5
-    
-    # Step command parameters
-    stepTimeout: float = 5.0        # Maximum time for step command
-    stepTolerance: float = 0.05     # Position tolerance for "reached"
-    stepSettlingTime: float = 0.1   # Time to maintain tolerance before confirming (NEW!)
 
     def __post_init__(self):
         """Validate configuration"""
@@ -87,26 +70,18 @@ class MotorConfig:
             raise ValueError(f"motorId must be 0-127, got {self.motorId}")
         if not CAN_INTERFACE_PATTERN.match(self.canInterface):
             raise ValueError(f"Invalid CAN interface: {self.canInterface}")
-        if self.stepSettlingTime < 0:
-            raise ValueError(f"stepSettlingTime must be >= 0, got {self.stepSettlingTime}")
 
 
 # ==================== CAN Interface ====================
 class CANInterface:
-    """CAN interface automatic setup"""
+    """CAN interface setup utility"""
     
     @staticmethod
     def setup_interface(canInterface: Optional[str] = None, 
-                        bitrate: Optional[int]= None,
+                        bitrate: Optional[int] = None,
                         config: Optional[MotorConfig] = None) -> bool:
-        """
-        Setup CAN interface using system commands
+        """Setup CAN interface using system commands"""
         
-        This is separate from TMotorManager_mit_can initialization.
-        TMotorManager automatically detects the CAN interface after setup.
-        """
-
-        # Determine interface and bitrate with proper fallback logic
         if config is not None:
             _interface = canInterface if canInterface is not None else config.canInterface
             _bitrate = bitrate if bitrate is not None else config.bitrate
@@ -183,30 +158,14 @@ class TrajectoryGenerator:
 # ==================== Motor Class ====================
 class Motor:
     """
-    High-level motor control API
+    High-level motor control API (Non-blocking design)
     
-    Naming Convention:
-    - Variables: camelCase
-    - Functions: snake_case
-    
-    TMotorManager_mit_can Usage:
-        manager = TMotorManager_mit_can(
-            motor_type='AK80-9',
-            motor_ID=1,
-            max_mosfett_temp=50  # Only these 3 parameters!
-        )
-    
-    Example:
-        # Method 1: Direct parameters
-        motor = Motor('AK80-9', motorId=2, autoInit=True)
-        
-        # Method 2: Config object
-        config = MotorConfig(motorType='AK80-9', motorId=2, maxTemperature=80)
-        motor = Motor(config=config)
-        
-        # Method 3: Context manager
-        with Motor('AK80-9', motorId=2) as motor:
-            motor.track_trajectory(1.57, 2.0)
+    Usage:
+        with Motor('AK70-10', motorId=1) as motor:
+            while running:
+                motor.set_position(target)
+                motor.update()
+                time.sleep(0.01)
     """
     
     def __init__(self,
@@ -218,19 +177,8 @@ class Motor:
                  maxTemperature: Optional[float] = None,
                  config: Optional[MotorConfig] = None,
                  **kwargs):
-        """
-        Initialize Motor object
+        """Initialize Motor object"""
         
-        Args:
-            motorType: Motor model
-            motorId: CAN ID (1-32)
-            canInterface: CAN interface for setup only
-            bitrate: CAN bitrate for setup
-            autoInit: Auto setup CAN
-            maxTemperature: Max MOSFET temperature (°C)
-            config: MotorConfig object
-            **kwargs: Additional params
-        """
         # Handle config parameter
         if config is not None:
             self.config = config
@@ -256,7 +204,6 @@ class Motor:
         self._manager: Optional[TMotorManager_mit_can] = None
         self._isEnabled = False
         self._powerOnTime = 0.0
-        self._controlModeSet = False
         
         # Last known state
         self._lastPosition = 0.0
@@ -264,26 +211,20 @@ class Motor:
         self._lastTorque = 0.0
         self._lastTemperature = 0.0
         
-        # Setup CAN interface (separate from TMotorManager)
+        # Setup CAN interface
         if self.config.autoInit:
             CANInterface.setup_interface(config=self.config)
         
-        # Initialize TMotorManager with CORRECT signature
+        # Initialize TMotorManager
         try:
             self._manager = TMotorManager_mit_can(
                 motor_type=self.config.motorType,
                 motor_ID=self.config.motorId,
                 max_mosfett_temp=int(self.config.maxTemperature)
-                # NO CAN_bus parameter!
-                # TMotorManager automatically detects CAN interface
             )
             logging.info(f"✓ Motor connected: {self.config.motorType} ID={self.config.motorId}")
-            logging.info(f"  Max MOSFET temp: {self.config.maxTemperature}°C")
-            logging.info(f"  Power: OFF (call enable() or use 'with')")
         except Exception as e:
             logging.error(f"Failed to connect motor: {e}")
-            import traceback
-            traceback.print_exc()
             raise
     
     def __enter__(self):
@@ -294,6 +235,7 @@ class Motor:
         self.disable()
         return False
     
+    # ==================== Properties ====================
     @property
     def position(self) -> float:
         return self._lastPosition
@@ -310,6 +252,7 @@ class Motor:
     def temperature(self) -> float:
         return self._lastTemperature
     
+    # ==================== Power Control ====================
     def enable(self) -> None:
         """Enable motor (Power ON)"""
         if self._isEnabled:
@@ -319,66 +262,27 @@ class Motor:
         if self._manager is None:
             raise RuntimeError("Motor manager not initialized")
         
-        try:
-            self._manager.__enter__()
-            self._isEnabled = True
-            self._powerOnTime = time.time()
-            
-            time.sleep(0.1)
-            self.update()
-            
-            logging.info("=" * 60)
-            logging.info("Motor ENABLED (Powered ON)")
-            logging.info("=" * 60)
-        except Exception as e:
-            logging.error(f"Failed to enable motor: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+        self._manager.__enter__()
+        self._isEnabled = True
+        self._powerOnTime = time.time()
+        
+        time.sleep(0.1)
+        self.update()
+        
+        logging.info("=" * 50)
+        logging.info("Motor ENABLED")
+        logging.info("=" * 50)
     
     def disable(self) -> None:
         """Disable motor (Power OFF)"""
         if self._manager and self._isEnabled:
-            try:
-                uptime = time.time() - self._powerOnTime
-                self._manager.__exit__(None, None, None)
-                self._isEnabled = False
-                self._controlModeSet = False
-                
-                logging.info("=" * 60)
-                logging.info("Motor DISABLED (Powered OFF)")
-                logging.info(f"Total powered-on time: {uptime:.2f} seconds")
-                logging.info("=" * 60)
-            except Exception as e:
-                logging.error(f"Error disabling motor: {e}")
-    
-    def update(self) -> Dict[str, float]:
-        """Update motor state"""
-        if not self._isEnabled or self._manager is None:
-            raise RuntimeError("Motor not enabled")
-        
-        try:
-            self._manager.update()
+            uptime = time.time() - self._powerOnTime
+            self._manager.__exit__(None, None, None)
+            self._isEnabled = False
             
-            self._lastPosition = self._manager.position
-            self._lastVelocity = self._manager.velocity
-            self._lastTorque = self._manager.torque
-            self._lastTemperature = self._manager.get_temperature_celsius()
-            
-            return {
-                'position': self._lastPosition,
-                'velocity': self._lastVelocity,
-                'torque': self._lastTorque,
-                'temperature': self._lastTemperature
-            }
-        except Exception as e:
-            logging.debug(f"Update warning: {e}")
-            return {
-                'position': self._lastPosition,
-                'velocity': self._lastVelocity,
-                'torque': self._lastTorque,
-                'temperature': self._lastTemperature
-            }
+            logging.info("=" * 50)
+            logging.info(f"Motor DISABLED (uptime: {uptime:.1f}s)")
+            logging.info("=" * 50)
     
     def is_power_on(self) -> bool:
         return self._isEnabled
@@ -388,39 +292,40 @@ class Motor:
             return time.time() - self._powerOnTime
         return 0.0
     
-    def check_connection(self) -> bool:
-        if not self._isEnabled:
-            return False
-        try:
-            self.update()
-            return True
-        except:
-            return False
+    # ==================== State Update ====================
+    def update(self) -> Dict[str, float]:
+        """Send command and receive motor state"""
+        if not self._isEnabled or self._manager is None:
+            raise RuntimeError("Motor not enabled")
+        
+        self._manager.update()
+        
+        self._lastPosition = self._manager.position
+        self._lastVelocity = self._manager.velocity
+        self._lastTorque = self._manager.torque
+        self._lastTemperature = self._manager.get_temperature_celsius()
+        
+        return {
+            'position': self._lastPosition,
+            'velocity': self._lastVelocity,
+            'torque': self._lastTorque,
+            'temperature': self._lastTemperature
+        }
     
+    # ==================== Control Commands ====================
     def set_position(self,
-                        targetPos: float,
-                        duration: float = 0.0,
-                        kp: Optional[float] = None,
-                        kd: Optional[float] = None,
-                        feedTor: float = 0.0,
-                        trajectoryType: str = 'minimum_jerk') -> None:
+                     targetPos: float,
+                     kp: Optional[float] = None,
+                     kd: Optional[float] = None,
+                     feedTor: float = 0.0) -> None:
         """
-        Trajectory control with settling time logic for step commands
+        Set position command (non-blocking)
         
         Args:
             targetPos: Target position (rad)
-            duration: Motion duration (seconds)
-                     - If <= STEP_COMMAND_THRESHOLD (0.02s): Step command with settling check
-                     - If > STEP_COMMAND_THRESHOLD: Smooth trajectory
             kp: Position gain (Nm/rad)
             kd: Velocity gain (Nm/(rad/s))
-            feedTor: Feedforward torque (Nm) - useful for gravity compensation
-            trajectoryType: 'minimum_jerk', 'cubic', 'linear'
-        
-        Step Command Behavior:
-            - Position must stay within tolerance for stepSettlingTime seconds
-            - Prevents premature return when using feedforward torque
-            - More robust than simple tolerance check
+            feedTor: Feedforward torque (Nm)
         """
         if not self._isEnabled or self._manager is None:
             raise RuntimeError("Motor not enabled")
@@ -430,193 +335,87 @@ class Motor:
         if kd is None:
             kd = self.config.defaultKd
         
-        try:
-            # Set control mode
-            self._manager.set_impedance_gains_real_unit_full_state_feedback(K=kp, B=kd)
-            self._controlModeSet = True
-            
-            # ==================== STEP COMMAND ====================
-            if duration <= STEP_COMMAND_THRESHOLD:
-                feedTorStr = f", FF={feedTor:.2f}Nm" if feedTor != 0.0 else ""
-                logging.info(f"Step: {self._lastPosition:.3f} → {targetPos:.3f} rad{feedTorStr}")
-                
-                startTime = time.time()
-                timeout = self.config.stepTimeout
-                tolerance = self.config.stepTolerance
-                settlingTime = self.config.stepSettlingTime
-                
-                # Calculate required cycles for settling
-                requiredCycles = max(1, int(settlingTime / CONTROL_LOOP_PERIOD))
-                settlingCounter = 0
-                
-                logging.info(f"  Settling: {settlingTime:.3f}s ({requiredCycles} cycles @ {CONTROL_LOOP_FREQUENCY}Hz)")
-                
-                while time.time() - startTime < timeout:
-                    self._manager.position = targetPos
-                    self._manager.torque = feedTor
-                    self.update()
-                    
-                    error = abs(self._lastPosition - targetPos)
-                    
-                    if error < tolerance:
-                        settlingCounter += 1
-                        
-                        # Log settling progress (every 10 cycles or when complete)
-                        if settlingCounter % 10 == 0 or settlingCounter >= requiredCycles:
-                            progress = min(100, int(100 * settlingCounter / requiredCycles))
-                            logging.info(f"    Settling: {progress}% ({settlingCounter}/{requiredCycles})")
-                        
-                        # Check if settled
-                        if settlingCounter >= requiredCycles:
-                            elapsed = time.time() - startTime
-                            logging.info(f"  ✓ Reached and STABLE in {elapsed:.2f}s")
-                            logging.info(f"    Final position: {self._lastPosition:.3f} rad")
-                            logging.info(f"    Final error: {error:.4f} rad")
-                            return
-                    else:
-                        # Reset counter if position drifts out of tolerance
-                        if settlingCounter > 0:
-                            logging.info(f"    ⚠ Drift detected! Resetting settling counter ({settlingCounter}→0)")
-                        settlingCounter = 0
-                    
-                    time.sleep(CONTROL_LOOP_PERIOD)
-                
-                # Timeout
-                error = abs(self._lastPosition - targetPos)
-                logging.warning(f"  ⚠ Timeout ({timeout}s)!")
-                logging.warning(f"    Target: {targetPos:.3f}, Current: {self._lastPosition:.3f}")
-                logging.warning(f"    Error: {error:.3f} rad")
-                logging.warning(f"    Settling progress: {settlingCounter}/{requiredCycles} cycles")
-                return
-            
-            # ==================== TRAJECTORY ====================
-            if trajectoryType == 'minimum_jerk':
-                trajFunc = TrajectoryGenerator.minimum_jerk
-            elif trajectoryType == 'cubic':
-                trajFunc = TrajectoryGenerator.cubic
-            elif trajectoryType == 'linear':
-                trajFunc = TrajectoryGenerator.linear
-            else:
-                raise ValueError(f"Unknown trajectory: {trajectoryType}")
-            
-            startPos = self._lastPosition
-            t0 = time.time()
-            
-            feedTorStr = f", FF={feedTor:.2f}Nm" if feedTor != 0.0 else ""
-            logging.info(f"Traj: {startPos:.3f} → {targetPos:.3f} rad ({duration:.2f}s{feedTorStr})")
-            
-            while True:
-                t = time.time() - t0
-                if t >= duration:
-                    break
-                
-                p, v = trajFunc(startPos, targetPos, t, duration)
-                
-                self._manager.position = p
-                self._manager.torque = feedTor
-                self.update()
-                
-                time.sleep(CONTROL_LOOP_PERIOD)
-            
-            # Final
-            self._manager.position = targetPos
-            self._manager.torque = feedTor
-            self.update()
-            
-            finalError = abs(self._lastPosition - targetPos)
-            logging.info(f"  ✓ Trajectory complete")
-            logging.info(f"    Final position: {self._lastPosition:.3f} rad")
-            logging.info(f"    Final error: {finalError:.4f} rad")
-            
-        except Exception as e:
-            logging.error(f"Trajectory failed: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+        self._manager.set_impedance_gains_real_unit_full_state_feedback(K=kp, B=kd)
+        self._manager.position = targetPos
+        self._manager.torque = feedTor
     
     def set_velocity(self,
-                    targetVel: float,
-                    kd: Optional[float] = None,
-                    duration: float = 0.0) -> None:
-        """Velocity control"""
+                     targetVel: float,
+                     kd: Optional[float] = None) -> None:
+        """
+        Set velocity command (non-blocking)
+        
+        Args:
+            targetVel: Target velocity (rad/s)
+            kd: Velocity gain
+        """
         if not self._isEnabled or self._manager is None:
             raise RuntimeError("Motor not enabled")
         
         if kd is None:
             kd = self.config.defaultKd
         
-        try:
-            logging.info(f"Velocity: {targetVel:.3f} rad/s")
-            
-            # Set control mode BEFORE command
-            self._manager.set_speed_gains(kd=kd)
-            self._controlModeSet = True
-            
-            if duration <= 0:
-                self._manager.velocity = targetVel
-                self.update()
-            else:
-                t0 = time.time()
-                while time.time() - t0 < duration:
-                    self._manager.velocity = targetVel
-                    self.update()
-                    time.sleep(CONTROL_LOOP_PERIOD)
-                
-                self._manager.velocity = 0.0
-                self.update()
-                logging.info("  ✓ Complete")
-                
-        except Exception as e:
-            logging.error(f"Velocity failed: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+        self._manager.set_speed_gains(kd=kd)
+        self._manager.velocity = targetVel
     
-    def set_torque(self,
-                  targetTor: float,
-                  duration: float = 0.0) -> None:
-        """Torque control"""
+    def set_torque(self, targetTor: float) -> None:
+        """
+        Set torque command (non-blocking)
+        
+        Args:
+            targetTor: Target torque (Nm)
+        """
         if not self._isEnabled or self._manager is None:
             raise RuntimeError("Motor not enabled")
         
-        try:
-            logging.info(f"Torque: {targetTor:.3f} Nm")
-            
-            # Set control mode
-            self._manager.set_current_gains()
-            self._controlModeSet = True
-            
-            if duration <= 0:
-                self._manager.torque = targetTor
-                self.update()
-            else:
-                t0 = time.time()
-                while time.time() - t0 < duration:
-                    self._manager.torque = targetTor
-                    self.update()
-                    time.sleep(CONTROL_LOOP_PERIOD)
-                
-                self._manager.torque = 0.0
-                self.update()
-                logging.info("  ✓ Complete")
-                
-        except Exception as e:
-            logging.error(f"Torque failed: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+        self._manager.set_current_gains()
+        self._manager.torque = targetTor
     
+    def stop(self) -> None:
+        """Emergency stop - set torque to zero immediately"""
+        if not self._isEnabled or self._manager is None:
+            return
+        
+        self._manager.set_current_gains()
+        self._manager.torque = 0.0
+        self.update()
+        logging.info("⚠ Motor STOPPED")
+    
+    # ==================== Utility ====================
     def zero_position(self) -> None:
-        """Zero position"""
+        """
+        Set current position as zero (encoder reset)
+        
+        Note: 
+            - Motor does NOT move, only redefines current position as 0
+            - Takes ~1 second for EEPROM save
+            - After zeroing, position command is set to 0 to prevent unwanted movement
+        """
         if not self._isEnabled or self._manager is None:
             raise RuntimeError("Motor not enabled")
         
+        logging.info("Zeroing encoder...")
+        
+        self._manager.set_zero_position()
+        time.sleep(ZERO_POSITION_SETTLE_TIME)
+        self._manager.set_impedance_gains_real_unit_full_state_feedback(
+            K=self.config.defaultKp, 
+            B=self.config.defaultKd
+        )
+        self._manager.position = 0.0
+        self._manager.torque = 0.0
+        
+        # 4. 상태 업데이트
+        self.update()
+        
+        logging.info(f"✓ Encoder zeroed (position: {self._lastPosition:.4f} rad)")
+    
+    def check_connection(self) -> bool:
+        """Check if motor is responding"""
+        if not self._isEnabled:
+            return False
         try:
-            logging.info("Zeroing...")
-            self._manager.set_zero_position()
-            time.sleep(ZERO_POSITION_SETTLE_TIME)
             self.update()
-            logging.info(f"  ✓ Zeroed at {self._lastPosition:.3f} rad")
-        except Exception as e:
-            logging.error(f"Zero failed: {e}")
-            raise
+            return True
+        except:
+            return False
