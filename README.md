@@ -1,52 +1,88 @@
-# TMotorAPI v4.3
+# TMotorAPI v5.0
 
 A high-level Python library for controlling AK-series T-Motors using the MIT CAN protocol.
 
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-4.3-green.svg)](https://github.com/KR70004526/TMotorAPI)
+[![Version](https://img.shields.io/badge/version-5.0-green.svg)](https://github.com/KR70004526/TMotorAPI)
 
-## 🆕 What's New in v4.3
+## 🆕 What's New in v5.0
 
-### Settling Time Logic for Step Commands
-- **Robust Position Control**: Position must stay within tolerance for N consecutive cycles
-- **Drift Prevention**: Prevents premature return when using feedforward torque
-- **Automatic Settling Detection**: Monitors stability before confirming arrival
-- **Enhanced Logging**: Real-time settling progress updates
+### Non-Blocking Control Design 🚀
+Complete redesign for **real-time control applications** with non-blocking commands.
 
-### Key Improvements
+**Major Changes from v4.3:**
+
+#### ✅ Removed Duration Parameter
 ```python
-# Before v4.3: Simple tolerance check (could return prematurely)
-motor.set_position(1.57, duration=0.0)  # Returns immediately when within tolerance
+# v4.3 (Blocking)
+motor.set_position(1.57, duration=2.0)  # Blocks for 2 seconds
+motor.set_torque(5.0, duration=1.0)     # Blocks for 1 second
 
-# v4.3: Settling time verification (more robust)
-motor.set_position(1.57, duration=0.0, feedTor=2.0)  
-# → Position must be stable for 0.1s (configurable) before returning
-# → Prevents drift from feedforward torque
+# v5.0 (Non-blocking) ⭐
+motor.set_position(1.57)  # Returns immediately
+motor.set_torque(5.0)     # Returns immediately
+# User controls timing with update() loop
 ```
 
-## 🌟 Features
+#### ✅ Simplified Control Flow
+```python
+# v5.0: User-controlled loop
+while running:
+    motor.set_torque(calculate_torque())  # Set command
+    motor.update()                         # Send & receive
+    time.sleep(0.01)                       # 100 Hz control
+```
 
-- **4 Control Modes**: Position, Velocity, Torque, and Advanced Impedance control
-- **Settling Time Logic**: Robust step command behavior with stability verification (NEW in v4.3)
-- **Feedforward Torque**: Gravity compensation support for position control (NEW in v4.3)
-- **Context Manager Support**: Automatic power management with Python's `with` statement
+#### ✅ Removed Settling Time Logic
+- No automatic settling verification
+- User implements custom settling if needed
+- Removed: `stepTimeout`, `stepTolerance`, `stepSettlingTime`
+
+#### ✅ Fixed zero_position() Bug
+```python
+# v4.3: Could cause unwanted movement after zeroing
+motor.zero_position()  # Bug: Motor might move
+
+# v5.0: Safe zeroing with position command reset
+motor.zero_position()  # Safe: Motor stays in place
+```
+
+#### ✅ Added Emergency Stop
+```python
+motor.stop()  # New method: Immediately set torque to 0
+```
+
+---
+
+## 🌟 Key Features
+
+- **Non-Blocking Control**: All commands return immediately for real-time applications
+- **4 Control Modes**: Position, Velocity, Torque, and Impedance control
+- **Context Manager**: Automatic power management with `with` statement
 - **Type Hints**: Full type annotations for better IDE support
-- **Detailed Logging**: Comprehensive operation logs with settling progress tracking
+- **Detailed Logging**: Comprehensive operation logs
 - **Auto CAN Setup**: Automatic CAN interface initialization (optional)
-- **Trajectory Planning**: Minimum jerk, cubic, and linear trajectory generators
+- **Emergency Stop**: Safe motor stop with `stop()` method
+- **Safe Zeroing**: zero_position() prevents unwanted movement
+
+---
 
 ## 📋 Table of Contents
 
-- [What's New in v4.3](#-whats-new-in-v43)
+- [What's New in v5.0](#-whats-new-in-v50)
 - [Installation](#-installation)
 - [Quick Start](#-quick-start)
 - [Control Modes](#-control-modes)
+- [Non-Blocking Design](#-non-blocking-design)
 - [Advanced Features](#-advanced-features)
 - [Configuration](#-configuration)
 - [API Reference](#-api-reference)
 - [Examples](#-examples)
+- [Migration from v4.3](#-migration-from-v43)
 - [Troubleshooting](#-troubleshooting)
+
+---
 
 ## 🚀 Installation
 
@@ -80,23 +116,47 @@ cd TMotorAPI
 # Copy to your project
 cp src/TMotorAPI.py your_project/
 
-# Install the API using pip
-python3 -m pip install -e . --break-system-packages # Type this in TMotorAPI folder where pyproject.toml file exist.
-# This will download API with editor version --> If you change the code, then it will automatically upload without download.
+# Or install using pip (editable mode)
+python3 -m pip install -e . --break-system-packages
+# Editable mode: Changes to code take effect immediately
 ```
+
+---
 
 ## ⚡ Quick Start
 
-### Basic Usage with Context Manager
+### Basic Non-Blocking Control
 
 ```python
 from TMotorAPI import Motor
+import time
+import signal
 
-# Create and use motor with context manager (recommended)
+# Signal handler for clean exit
+running = True
+signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
+
+# Create and use motor with context manager
 with Motor('AK80-64', motorId=2, autoInit=True) as motor:
-    # Motor is powered on inside this block
-    motor.set_position(1.57)  # Move to 1.57 rad with settling verification
-    # Motor is automatically powered off when exiting
+    print("Motor enabled!")
+    
+    # Non-blocking control loop
+    while running:
+        # Set control command
+        motor.set_position(1.57)  # Target position
+        
+        # Send command and receive state
+        motor.update()
+        
+        # Print current state
+        print(f"Position: {motor.position:.3f} rad, "
+              f"Velocity: {motor.velocity:.3f} rad/s, "
+              f"Torque: {motor.torque:.3f} Nm")
+        
+        # Control loop timing (100 Hz)
+        time.sleep(0.01)
+    
+print("Motor disabled!")
 ```
 
 ### Understanding Power Management
@@ -106,18 +166,19 @@ with Motor('AK80-64', motorId=2, autoInit=True) as motor:
 #### 1. Object Creation (Connection, Power OFF)
 ```python
 motor = Motor('AK80-64', motorId=2, autoInit=True)
-# TMotorManager object created
-# CAN connection established
-# Motor power is still OFF (motor won't move yet)
+# ✅ TMotorManager object created
+# ✅ CAN connection established
+# ⚠️ Motor power is still OFF (motor won't move yet)
 ```
 
 #### 2. Enable/With Block (Power ON)
 ```python
-with motor as m:  # __enter__() called → enable() → Power ON
-    # Motor is now powered and ready to move
-    m.set_position(1.57)
+with motor:  # __enter__() → enable() → Power ON
+    # ✅ Motor is now powered and ready to move
+    motor.set_position(1.57)
+    motor.update()  # Actually sends command
     # Power remains on throughout the with block
-# __exit__() called → disable() → Power OFF
+# __exit__() → disable() → Power OFF
 ```
 
 ### Manual Power Control
@@ -125,14 +186,19 @@ with motor as m:  # __enter__() called → enable() → Power ON
 ```python
 motor = Motor('AK80-64', motorId=2, autoInit=True)
 
-motor.enable()  # Power ON - motor can now move
-print(f"Power status: {motor.is_power_on()}")  # True
+motor.enable()  # Power ON
+print(f"Power: {motor.is_power_on()}")  # True
 
-motor.set_position(1.57)
+while running:
+    motor.set_position(1.57)
+    motor.update()
+    time.sleep(0.01)
 
 motor.disable()  # Power OFF
-print(f"Power status: {motor.is_power_on()}")  # False
+print(f"Power: {motor.is_power_on()}")  # False
 ```
+
+---
 
 ## 🎯 Control Modes
 
@@ -140,97 +206,77 @@ print(f"Power status: {motor.is_power_on()}")  # False
 
 | Mode | Function | Use Case |
 |------|----------|----------|
-| **Position** | `set_position()` | Position control with trajectory planning |
-| **Velocity** | `set_velocity()` | Constant speed rotation |
+| **Position** | `set_position()` | Position tracking with PD control |
+| **Velocity** | `set_velocity()` | Speed control |
 | **Torque** | `set_torque()` | Force control, gravity compensation |
 
-### 1. Position Control (Enhanced in v4.3)
+**All modes are non-blocking in v5.0!**
 
-Position tracking with trajectory planning and settling verification.
+---
 
-#### Step Command (duration ≤ 0.02s)
+### 1. Position Control
+
+Position tracking with PD gains and optional feedforward torque.
+
 ```python
-# Simple step command with settling verification
 motor.set_position(
     targetPos=1.57,      # Target position (rad)
-    duration=0.0,        # Step command (no trajectory)
-    kp=10.0,             # Position gain (Nm/rad)
-    kd=2.0,              # Velocity gain (Nm/(rad/s))
-    feedTor=0.0          # Feedforward torque (Nm) - NEW!
+    kp=10.0,             # Position gain (Nm/rad), optional
+    kd=2.0,              # Velocity gain (Nm/(rad/s)), optional
+    feedTor=0.0          # Feedforward torque (Nm), optional
 )
 ```
 
-**Settling Behavior:**
-```
-Step: 0.000 → 1.570 rad
-  Settling: 0.100s (10 cycles @ 100Hz)
-    Settling: 10% (1/10)
-    Settling: 20% (2/10)
-    ...
-    Settling: 100% (10/10)
-  ✓ Reached and STABLE in 0.15s
-    Final position: 1.570 rad
-    Final error: 0.0023 rad
-```
+**Parameters:**
+- `targetPos`: Desired position in radians
+- `kp`: Position gain (uses `defaultKp` if None)
+- `kd`: Velocity gain (uses `defaultKd` if None)
+- `feedTor`: Feedforward torque for gravity/load compensation
 
-#### Trajectory Command (duration > 0.02s)
+**Usage Pattern:**
 ```python
-# Smooth trajectory with minimum jerk
-motor.set_position(
-    targetPos=1.57,          # Target position (rad)
-    duration=2.0,            # Motion duration (s)
-    kp=10.0,                 # Position gain (Nm/rad)
-    kd=2.0,                  # Velocity gain (Nm/(rad/s))
-    feedTor=0.0,             # Feedforward torque (Nm)
-    trajectoryType='minimum_jerk'  # 'minimum_jerk', 'cubic', 'linear'
-)
+while running:
+    motor.set_position(target_angle, kp=10, kd=2)
+    motor.update()
+    time.sleep(0.01)  # 100 Hz control loop
 ```
 
-**Trajectory Types:**
-- `'minimum_jerk'`: Smooth 5th-order polynomial (default, best for human interaction)
-- `'cubic'`: 3rd-order polynomial (faster, less smooth)
-- `'linear'`: Linear interpolation (fastest, least smooth)
+**When to use:**
+- Position tracking with custom control loop
+- Real-time position updates based on sensor data
+- Integrating with external trajectory planners
 
-#### Feedforward Torque (Gravity Compensation)
-```python
-# Example: Compensate for gravity on a horizontal arm
-import numpy as np
-
-# Calculate gravity torque: τ = m * g * L * cos(θ)
-mass = 2.0  # kg
-g = 9.81    # m/s²
-length = 0.3  # m
-
-def gravity_torque(angle):
-    return mass * g * length * np.cos(angle)
-
-# Move with gravity compensation
-target_angle = 1.57
-motor.set_position(
-    targetPos=target_angle,
-    duration=0.0,
-    feedTor=gravity_torque(target_angle)  # Compensate gravity
-)
-```
-
-**When to use:** 
-- **Step command**: Quick positioning with stability verification
-- **Trajectory**: Smooth motion, predictable velocity profile
-- **Feedforward**: Gravity compensation, load compensation
+---
 
 ### 2. Velocity Control
 
-Direct velocity command.
+Direct velocity command with damping gain.
 
 ```python
 motor.set_velocity(
     targetVel=3.0,      # Target velocity (rad/s)
-    kd=5.0,             # Velocity gain (Nm/(rad/s))
-    duration=2.0        # Motion duration (s), 0 for continuous
+    kd=5.0              # Velocity gain (Nm/(rad/s)), optional
 )
 ```
 
-**When to use**: Continuous rotation, speed-based tasks
+**Parameters:**
+- `targetVel`: Desired velocity in rad/s
+- `kd`: Velocity gain (uses `defaultKd` if None)
+
+**Usage Pattern:**
+```python
+while running:
+    motor.set_velocity(target_speed, kd=5)
+    motor.update()
+    time.sleep(0.01)
+```
+
+**When to use:**
+- Continuous rotation applications
+- Speed-based control
+- Wheel/joint velocity control
+
+---
 
 ### 3. Torque Control
 
@@ -238,77 +284,237 @@ Direct torque/force control.
 
 ```python
 motor.set_torque(
-    targetTor=2.5,        # Desired torque (Nm)
-    duration=2.0          # Motion duration (s), 0 for single command
+    targetTor=2.5       # Desired torque (Nm)
 )
 ```
 
-**When to use**: Force control, compliance, haptics
+**Parameters:**
+- `targetTor`: Desired torque in Nm
+
+**Usage Pattern:**
+```python
+while running:
+    torque = calculate_torque()  # Your control algorithm
+    motor.set_torque(torque)
+    motor.update()
+    time.sleep(0.01)
+```
+
+**When to use:**
+- Force control applications
+- Gravity compensation
+- Impedance control
+- Haptic feedback
+- Compliant manipulation
+
+---
+
+## 🔄 Non-Blocking Design
+
+### Core Concept
+
+**v5.0 uses a non-blocking design where the user controls the timing:**
+
+```python
+# The Control Loop Pattern
+while running:
+    # 1. Calculate/update command
+    target = calculate_target()
+    
+    # 2. Set command (non-blocking, returns immediately)
+    motor.set_position(target)
+    
+    # 3. Send command & receive state (CAN communication)
+    motor.update()
+    
+    # 4. Use current state for next iteration
+    current_pos = motor.position
+    current_vel = motor.velocity
+    
+    # 5. Control loop timing
+    time.sleep(0.01)  # 100 Hz
+```
+
+### Key Differences from v4.3
+
+| Aspect | v4.3 (Blocking) | v5.0 (Non-blocking) |
+|--------|-----------------|---------------------|
+| **Command** | Blocks until complete | Returns immediately |
+| **Duration** | `duration=2.0` | No duration parameter |
+| **Timing** | Handled by library | User controls timing |
+| **Flexibility** | Limited | High flexibility |
+| **Real-time** | Difficult | Easy |
+
+### Advantages of Non-Blocking Design
+
+#### 1. Real-Time Control
+```python
+# React to sensor data immediately
+while running:
+    sensor_data = read_sensor()
+    
+    if sensor_data > threshold:
+        motor.set_torque(0)  # Immediate response
+    else:
+        motor.set_torque(5.0)
+    
+    motor.update()
+    time.sleep(0.001)  # 1000 Hz possible
+```
+
+#### 2. Multi-Motor Coordination
+```python
+# Control multiple motors synchronously
+with Motor('AK80-64', motorId=1) as motor1, \
+     Motor('AK80-64', motorId=2) as motor2:
+    
+    while running:
+        # Set commands for both motors
+        motor1.set_position(angle1)
+        motor2.set_position(angle2)
+        
+        # Update both at the same time
+        motor1.update()
+        motor2.update()
+        
+        time.sleep(0.01)
+```
+
+#### 3. Custom Control Algorithms
+```python
+# Implement your own settling logic
+def wait_until_settled(motor, target, tolerance=0.05, timeout=5.0):
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        motor.set_position(target)
+        motor.update()
+        
+        if abs(motor.position - target) < tolerance:
+            return True
+        
+        time.sleep(0.01)
+    
+    return False
+
+# Use it
+if wait_until_settled(motor, 1.57):
+    print("Position reached!")
+```
+
+#### 4. Integration with External Systems
+```python
+# Integrate with ROS, game loops, etc.
+def ros_control_loop():
+    rate = rospy.Rate(100)  # 100 Hz
+    
+    while not rospy.is_shutdown():
+        # Get command from ROS
+        target = get_ros_command()
+        
+        # Send to motor
+        motor.set_position(target)
+        motor.update()
+        
+        # Publish state back to ROS
+        publish_motor_state(motor.position, motor.velocity)
+        
+        rate.sleep()
+```
+
+---
 
 ## 🔬 Advanced Features
 
-### Settling Time Configuration
+### Emergency Stop
 
-Control how strictly the motor verifies position stability:
-
-```python
-from TMotorAPI import MotorConfig
-
-config = MotorConfig(
-    motorType='AK80-64',
-    motorId=2,
-    stepTimeout=5.0,        # Max time for step command (s)
-    stepTolerance=0.05,     # Position tolerance (rad, ±2.87°)
-    stepSettlingTime=0.1    # Required stability duration (s)
-)
-
-motor = Motor(config=config)
-```
-
-**Settling Time Guidelines:**
-- `0.0s`: No settling check (returns immediately when within tolerance)
-- `0.05s - 0.1s`: Light verification (5-10 cycles @ 100Hz)
-- `0.2s - 0.5s`: Strong verification (20-50 cycles)
-- `> 0.5s`: Very strict verification (rare, high-precision applications)
-
-### Trajectory Planning
-
-Built-in trajectory generators for smooth motion:
+Immediately set torque to zero for safety:
 
 ```python
-# Minimum jerk (5th order) - smoothest, best for human interaction
-motor.set_position(1.57, duration=2.0, trajectoryType='minimum_jerk')
+# In emergency situations
+motor.stop()  # Sets torque to 0 and updates
 
-# Cubic (3rd order) - faster, less smooth
-motor.set_position(1.57, duration=2.0, trajectoryType='cubic')
-
-# Linear - fastest, no acceleration smoothing
-motor.set_position(1.57, duration=2.0, trajectoryType='linear')
+# Equivalent to:
+motor.set_torque(0.0)
+motor.update()
 ```
+
+**Use cases:**
+- Safety stop button
+- Collision detection
+- Over-temperature protection
+- Error conditions
 
 ### Zeroing Position
 
-Set current position as zero reference:
+Set current position as zero reference (safe in v5.0):
 
 ```python
 motor.zero_position()
-# Current position is now considered 0.0 rad
+# ✅ Current position is now 0.0 rad
+# ✅ Motor does NOT move
+# ✅ Position command is reset to 0
+# ✅ Takes ~1 second (EEPROM save)
+```
+
+**What happens:**
+1. Sends zero position command to controller
+2. Waits 1 second for EEPROM save
+3. Sets position command to 0 (prevents movement)
+4. Updates motor state
+
+**When to use:**
+- Initial calibration
+- Setting home position
+- Resetting encoder after mechanical adjustment
+
+### Gravity Compensation
+
+Compensate for gravity in position control:
+
+```python
+import numpy as np
+
+# System parameters
+mass = 2.0      # kg
+g = 9.81        # m/s²
+length = 0.3    # m
+
+def gravity_torque(angle):
+    """Calculate gravity compensation torque"""
+    return mass * g * length * np.cos(angle)
+
+# Use in control loop
+while running:
+    target_angle = 1.57  # 90 degrees
+    
+    motor.set_position(
+        targetPos=target_angle,
+        kp=10.0,
+        kd=2.0,
+        feedTor=gravity_torque(target_angle)
+    )
+    motor.update()
+    time.sleep(0.01)
 ```
 
 ### State Monitoring
 
+Access motor state in real-time:
+
 ```python
-# Get current state (triggers update)
+# Update and get all state
 state = motor.update()
 print(f"Position: {state['position']:.3f} rad")
 print(f"Velocity: {state['velocity']:.3f} rad/s")
 print(f"Torque: {state['torque']:.3f} Nm")
 print(f"Temperature: {state['temperature']:.1f} °C")
 
-# Access cached state (no communication)
-pos = motor.position
-vel = motor.velocity
-temp = motor.temperature
+# Or access properties (uses last updated values)
+pos = motor.position        # rad
+vel = motor.velocity        # rad/s
+tor = motor.torque          # Nm
+temp = motor.temperature    # °C
 
 # Check motor status
 is_on = motor.is_power_on()
@@ -316,65 +522,135 @@ uptime = motor.get_uptime()  # Seconds since enable()
 connected = motor.check_connection()
 ```
 
+### Custom Control Loops
+
+Implement advanced control algorithms:
+
+```python
+# Example: Simple settling logic
+def move_with_settling(motor, target, tolerance=0.05, 
+                       stable_count=10):
+    """
+    Move to target and wait until position is stable
+    
+    Args:
+        motor: Motor instance
+        target: Target position (rad)
+        tolerance: Position tolerance (rad)
+        stable_count: Required consecutive stable readings
+    """
+    count = 0
+    
+    while count < stable_count:
+        motor.set_position(target)
+        motor.update()
+        
+        if abs(motor.position - target) < tolerance:
+            count += 1
+        else:
+            count = 0  # Reset if position drifts
+        
+        time.sleep(0.01)
+    
+    print(f"Position stable at {motor.position:.3f} rad")
+
+# Use it
+move_with_settling(motor, 1.57, tolerance=0.03, stable_count=20)
+```
+
+---
+
 ## ⚙️ Configuration
 
 ### MotorConfig Class
 
-Complete configuration object for motor parameters:
+Complete configuration for motor parameters:
 
 ```python
 from TMotorAPI import MotorConfig
 
 config = MotorConfig(
-    # Motor identification
+    # ==================== Motor Identification ====================
     motorType='AK80-64',        # 'AK80-64', 'AK80-9', 'AK70-10'
     motorId=2,                  # CAN ID (0-127)
     
-    # CAN setup (for CANInterface.setup_interface only)
+    # ==================== CAN Setup ====================
     canInterface='can0',        # 'can0', 'can1', etc.
-    bitrate=1000000,            # CAN bitrate (default: 1Mbps)
+    bitrate=1000000,            # CAN bitrate (default: 1 Mbps)
     autoInit=True,              # Auto setup CAN interface
     
-    # Safety
+    # ==================== Safety ====================
     maxTemperature=50.0,        # Max MOSFET temperature (°C)
     
-    # Default control gains
+    # ==================== Default Control Gains ====================
     defaultKp=10.0,             # Position gain (Nm/rad)
     defaultKd=0.5,              # Velocity gain (Nm/(rad/s))
-    
-    # Step command parameters (NEW in v4.3)
-    stepTimeout=5.0,            # Max time for step command (s)
-    stepTolerance=0.05,         # Position tolerance (rad)
-    stepSettlingTime=0.1        # Required stability duration (s)
 )
 
 motor = Motor(config=config)
 ```
 
-### Parameter Explanation
+### Parameter Details
 
 #### Motor Identification
-- **motorType**: Motor model string (must match physical motor)
-- **motorId**: CAN ID configured on the motor (0-127)
+- **motorType**: Motor model string
+  - Must match physical motor
+  - Examples: `'AK80-64'`, `'AK80-9'`, `'AK70-10'`
+- **motorId**: CAN ID (0-127)
+  - Configured on the motor hardware
+  - Must be unique on the CAN bus
 
 #### CAN Setup
-- **canInterface**: Only used for `CANInterface.setup_interface()`
-- **bitrate**: CAN bus speed (default 1Mbps for T-Motors)
-- **autoInit**: If `True`, automatically runs CAN interface setup
+- **canInterface**: Linux CAN interface name
+  - Only used by `CANInterface.setup_interface()`
+  - Common: `'can0'`, `'can1'`
+- **bitrate**: CAN bus speed
+  - Default: 1000000 (1 Mbps) for T-Motors
+  - Must match all devices on bus
+- **autoInit**: Automatic CAN interface setup
+  - `True`: Runs setup automatically
+  - `False`: Manual setup required
 
 **Note**: `TMotorManager_mit_can` automatically detects CAN interface after setup.
 
 #### Safety
-- **maxTemperature**: Triggers warnings when exceeded (doesn't stop motor)
+- **maxTemperature**: Temperature warning threshold (°C)
+  - Logs warning when exceeded
+  - Does NOT automatically stop motor
+  - User should monitor and take action
 
-#### Control Gains
-- **defaultKp**: Used when `kp=None` in `set_position()`
-- **defaultKd**: Used when `kd=None` in `set_position()` and `set_velocity()`
+#### Default Control Gains
+- **defaultKp**: Default position gain (Nm/rad)
+  - Used when `kp=None` in `set_position()`
+  - Higher = stiffer position control
+  - Typical: 5.0 - 20.0
+- **defaultKd**: Default velocity gain (Nm/(rad/s))
+  - Used when `kd=None` in `set_position()` and `set_velocity()`
+  - Higher = more damping
+  - Typical: 0.5 - 5.0
 
-#### Step Command Tuning (v4.3)
-- **stepTimeout**: Prevents infinite waiting if motor can't reach target
-- **stepTolerance**: Acceptable position error (±0.05 rad ≈ ±2.87°)
-- **stepSettlingTime**: How long position must be stable before confirming
+### Three Ways to Create Motor
+
+```python
+# Method 1: Direct parameters (simple)
+motor = Motor('AK80-64', motorId=2, autoInit=True)
+
+# Method 2: Config object (recommended for complex setups)
+config = MotorConfig(
+    motorType='AK80-64',
+    motorId=2,
+    maxTemperature=60.0,
+    defaultKp=15.0,
+    defaultKd=2.0
+)
+motor = Motor(config=config)
+
+# Method 3: Mix both (parameters override config)
+config = MotorConfig(motorType='AK80-64', motorId=2)
+motor = Motor(config=config, maxTemperature=70.0)  # Override
+```
+
+---
 
 ## 📚 API Reference
 
@@ -384,47 +660,36 @@ motor = Motor(config=config)
 
 ```python
 Motor(
-    motorType: Optional[str] = None,        # Motor model
-    motorId: Optional[int] = None,          # CAN ID (0-127)
-    canInterface: Optional[str] = None,     # CAN interface name
-    bitrate: Optional[int] = None,          # CAN bitrate
-    autoInit: Optional[bool] = None,        # Auto initialize CAN
-    maxTemperature: Optional[float] = None, # Max safe temperature (°C)
-    config: Optional[MotorConfig] = None,   # Or use config object
+    motorType: Optional[str] = None,
+    motorId: Optional[int] = None,
+    canInterface: Optional[str] = None,
+    bitrate: Optional[int] = None,
+    autoInit: Optional[bool] = None,
+    maxTemperature: Optional[float] = None,
+    config: Optional[MotorConfig] = None,
     **kwargs
 )
 ```
 
-**Three Ways to Create Motor:**
-
-```python
-# Method 1: Direct parameters
-motor = Motor('AK80-64', motorId=2, autoInit=True)
-
-# Method 2: Config object
-config = MotorConfig(motorType='AK80-64', motorId=2)
-motor = Motor(config=config)
-
-# Method 3: Mix both (parameters override config)
-config = MotorConfig(motorType='AK80-64', motorId=2)
-motor = Motor(config=config, maxTemperature=60.0)  # Override temp
-```
-
 #### Control Methods
+
+All methods are **non-blocking** and return immediately.
 
 | Method | Parameters | Description |
 |--------|-----------|-------------|
-| `set_position()` | `targetPos, duration=0.0, kp=None, kd=None, feedTor=0.0, trajectoryType='minimum_jerk'` | Position control with trajectory planning |
-| `set_velocity()` | `targetVel, kd=None, duration=0.0` | Velocity control |
-| `set_torque()` | `targetTor, duration=0.0` | Torque control |
+| `set_position()` | `targetPos, kp=None, kd=None, feedTor=0.0` | Set position command |
+| `set_velocity()` | `targetVel, kd=None` | Set velocity command |
+| `set_torque()` | `targetTor` | Set torque command |
+| `stop()` | - | Emergency stop (torque = 0) |
 | `zero_position()` | - | Set current position as zero |
 
 #### State Methods
 
 ```python
-# Get current state (triggers CAN communication)
+# Send command and receive state (CAN communication)
 state = motor.update()
-# Returns: {'position': float, 'velocity': float, 'torque': float, 'temperature': float}
+# Returns: {'position': float, 'velocity': float, 
+#           'torque': float, 'temperature': float}
 
 # Access cached state (no CAN communication)
 pos = motor.position        # rad
@@ -432,8 +697,8 @@ vel = motor.velocity        # rad/s
 tor = motor.torque          # Nm
 temp = motor.temperature    # °C
 
-# Check status
-motor.is_power_on()         # Returns True/False
+# Status checks
+motor.is_power_on()         # True/False
 motor.get_uptime()          # Seconds since enable()
 motor.check_connection()    # Test CAN communication
 ```
@@ -441,19 +706,22 @@ motor.check_connection()    # Test CAN communication
 #### Power Management
 
 ```python
-motor.enable()   # Power on (required before any commands)
-motor.disable()  # Power off
+motor.enable()   # Power ON (required before commands)
+motor.disable()  # Power OFF
 
 # Context manager (automatic power management)
 with motor:
-    # Motor powered on automatically
+    # Motor powered on
     motor.set_position(1.57)
-# Motor powered off automatically
+    motor.update()
+# Motor powered off
 ```
+
+---
 
 ### CANInterface Class
 
-Manual CAN interface setup (optional, done automatically with `autoInit=True`):
+Manual CAN interface setup (optional, automatic with `autoInit=True`):
 
 ```python
 from TMotorAPI import CANInterface
@@ -468,14 +736,16 @@ CANInterface.setup_interface(
 CANInterface.setup_interface(config=motor_config)
 ```
 
-### TrajectoryGenerator Class
+---
 
-Low-level trajectory planning utilities:
+### TrajectoryGenerator Class (Utility)
+
+Low-level trajectory planning utilities (for custom implementations):
 
 ```python
 from TMotorAPI import TrajectoryGenerator
 
-# Minimum jerk trajectory
+# Minimum jerk trajectory (5th order)
 pos, vel = TrajectoryGenerator.minimum_jerk(
     startPos=0.0,
     endPos=1.57,
@@ -483,7 +753,7 @@ pos, vel = TrajectoryGenerator.minimum_jerk(
     totalDuration=2.0
 )
 
-# Cubic trajectory
+# Cubic trajectory (3rd order)
 pos, vel = TrajectoryGenerator.cubic(
     startPos=0.0,
     endPos=1.57,
@@ -500,22 +770,35 @@ pos, vel = TrajectoryGenerator.linear(
 )
 ```
 
+**Note**: These are utilities for implementing custom trajectory following in your control loop.
+
+---
+
 ## 💡 Examples
 
 ### Example 1: Simple Position Control
 
 ```python
 from TMotorAPI import Motor
+import time
+import signal
+
+running = True
+signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
 
 with Motor('AK80-64', motorId=1, autoInit=True) as motor:
-    # Quick step command
-    motor.set_position(1.57)  # π/2 rad
+    print("Moving to 90 degrees...")
     
-    # Smooth trajectory
-    motor.set_position(-1.57, duration=2.0)  # Move back smoothly
+    target = 1.57  # π/2 rad
     
-    # Return to zero
-    motor.set_position(0.0, duration=1.5)
+    while running:
+        motor.set_position(target, kp=10, kd=2)
+        motor.update()
+        
+        print(f"Position: {motor.position:.3f} rad, "
+              f"Error: {abs(motor.position - target):.4f} rad")
+        
+        time.sleep(0.01)  # 100 Hz
 ```
 
 ### Example 2: Gravity Compensation
@@ -523,39 +806,61 @@ with Motor('AK80-64', motorId=1, autoInit=True) as motor:
 ```python
 from TMotorAPI import Motor, MotorConfig
 import numpy as np
-
-# Configure motor
-config = MotorConfig(
-    motorType='AK80-64',
-    motorId=1,
-    stepSettlingTime=0.2,  # Stricter settling for gravity comp
-    stepTolerance=0.03     # Tighter tolerance
-)
+import time
+import signal
 
 # System parameters
 mass = 2.0      # kg
 g = 9.81        # m/s²
-length = 0.3    # m
+length = 0.3    # m (center of mass distance)
 
 def gravity_torque(angle):
     """Calculate gravity compensation torque"""
     return mass * g * length * np.cos(angle)
 
+# Configure motor
+config = MotorConfig(
+    motorType='AK80-64',
+    motorId=1,
+    defaultKp=15.0,
+    defaultKd=2.0
+)
+
+running = True
+signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
+
 with Motor(config=config) as motor:
     # Zero at horizontal position
+    print("Zeroing position...")
     motor.zero_position()
     
     # Move to various angles with gravity compensation
-    angles = [0.0, 0.5, 1.0, 1.57, 2.0]
+    angles = [0.0, 0.5, 1.0, 1.57, 2.0]  # radians
     
-    for angle in angles:
-        print(f"Moving to {np.degrees(angle):.1f}°...")
-        motor.set_position(
-            targetPos=angle,
-            duration=0.0,
-            feedTor=gravity_torque(angle)
-        )
-        print(f"  Position stable at {motor.position:.3f} rad")
+    for target_angle in angles:
+        print(f"\nMoving to {np.degrees(target_angle):.1f}°...")
+        
+        # Move for 2 seconds
+        start_time = time.time()
+        while time.time() - start_time < 2.0 and running:
+            motor.set_position(
+                targetPos=target_angle,
+                kp=15.0,
+                kd=2.0,
+                feedTor=gravity_torque(target_angle)
+            )
+            motor.update()
+            
+            print(f"  Pos: {motor.position:.3f} rad, "
+                  f"Torque: {motor.torque:.2f} Nm, "
+                  f"Temp: {motor.temperature:.1f}°C")
+            
+            time.sleep(0.01)
+        
+        if not running:
+            break
+    
+    print("\nDone!")
 ```
 
 ### Example 3: Velocity Sweep
@@ -563,28 +868,52 @@ with Motor(config=config) as motor:
 ```python
 from TMotorAPI import Motor
 import time
+import signal
+
+running = True
+signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
 
 with Motor('AK80-9', motorId=2, autoInit=True) as motor:
-    # Velocity sweep test
-    velocities = [1.0, 2.0, 3.0, 2.0, 1.0, 0.0]
+    velocities = [1.0, 2.0, 3.0, 2.0, 1.0, 0.0]  # rad/s
     
-    for vel in velocities:
-        print(f"Setting velocity: {vel} rad/s")
-        motor.set_velocity(vel, duration=1.0)
-        time.sleep(0.5)  # Brief pause between changes
+    for target_vel in velocities:
+        print(f"\nSetting velocity: {target_vel} rad/s")
+        
+        # Hold velocity for 2 seconds
+        start_time = time.time()
+        while time.time() - start_time < 2.0 and running:
+            motor.set_velocity(target_vel, kd=5.0)
+            motor.update()
+            
+            print(f"  Vel: {motor.velocity:.3f} rad/s, "
+                  f"Pos: {motor.position:.3f} rad")
+            
+            time.sleep(0.01)
+        
+        if not running:
+            break
+    
+    # Stop
+    motor.set_velocity(0.0)
+    motor.update()
 ```
 
-### Example 4: Torque Control with Monitoring
+### Example 4: Torque Control with Safety Monitoring
 
 ```python
-from TMotorAPI import Motor
+from TMotorAPI import Motor, MotorConfig
 import time
+import signal
 
+# Configure with lower temperature threshold
 config = MotorConfig(
     motorType='AK70-10',
     motorId=1,
-    maxTemperature=45.0  # Lower threshold for safety
+    maxTemperature=45.0
 )
+
+running = True
+signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
 
 with Motor(config=config) as motor:
     target_torque = 2.0  # Nm
@@ -593,80 +922,315 @@ with Motor(config=config) as motor:
     print(f"Applying {target_torque} Nm for {duration}s...")
     
     start_time = time.time()
-    motor.set_torque(target_torque, duration=0.0)  # Single command
     
-    # Monitor while applying torque
-    while time.time() - start_time < duration:
-        state = motor.update()
-        print(f"Pos: {state['position']:.3f} rad, "
-              f"Vel: {state['velocity']:.3f} rad/s, "
-              f"Torque: {state['torque']:.3f} Nm, "
-              f"Temp: {state['temperature']:.1f} °C")
+    while time.time() - start_time < duration and running:
+        # Apply torque
+        motor.set_torque(target_torque)
+        motor.update()
+        
+        # Monitor state
+        print(f"Pos: {motor.position:.3f} rad, "
+              f"Vel: {motor.velocity:.3f} rad/s, "
+              f"Torque: {motor.torque:.3f} Nm, "
+              f"Temp: {motor.temperature:.1f}°C")
+        
+        # Safety check
+        if motor.temperature > config.maxTemperature:
+            print("⚠ Temperature too high! Stopping...")
+            motor.stop()
+            break
+        
         time.sleep(0.1)
     
     # Stop torque
-    motor.set_torque(0.0)
+    motor.stop()
+    print("Torque stopped")
 ```
 
-### Example 5: Custom Settling Parameters
-
-```python
-from TMotorAPI import Motor, MotorConfig
-
-# High-precision application
-precise_config = MotorConfig(
-    motorType='AK80-64',
-    motorId=1,
-    stepTolerance=0.01,      # ±0.57° tolerance
-    stepSettlingTime=0.5,    # 0.5s stability required
-    stepTimeout=10.0         # Allow longer settling time
-)
-
-# Fast application (relaxed settling)
-fast_config = MotorConfig(
-    motorType='AK80-64',
-    motorId=2,
-    stepTolerance=0.1,       # ±5.73° tolerance
-    stepSettlingTime=0.05,   # 50ms stability
-    stepTimeout=3.0
-)
-
-with Motor(config=precise_config) as motor1, \
-     Motor(config=fast_config) as motor2:
-    
-    # Motor 1: High precision, takes longer
-    motor1.set_position(1.57)
-    
-    # Motor 2: Fast response, less strict
-    motor2.set_position(1.57)
-```
-
-### Example 6: Trajectory Comparison
+### Example 5: Custom Settling Logic
 
 ```python
 from TMotorAPI import Motor
 import time
+import signal
+
+def move_and_settle(motor, target, tolerance=0.05, stable_cycles=10):
+    """
+    Move to target and wait until position is stable
+    
+    Args:
+        motor: Motor instance
+        target: Target position (rad)
+        tolerance: Position tolerance (rad)
+        stable_cycles: Required consecutive stable readings
+    
+    Returns:
+        True if settled, False if interrupted
+    """
+    count = 0
+    running = True
+    
+    def stop_handler(s, f):
+        nonlocal running
+        running = False
+    
+    signal.signal(signal.SIGINT, stop_handler)
+    
+    print(f"Moving to {target:.3f} rad...")
+    
+    while count < stable_cycles and running:
+        motor.set_position(target, kp=10, kd=2)
+        motor.update()
+        
+        error = abs(motor.position - target)
+        
+        if error < tolerance:
+            count += 1
+            print(f"  Settling: {count}/{stable_cycles} "
+                  f"(error: {error:.4f} rad)")
+        else:
+            if count > 0:
+                print(f"  Drift detected! Resetting counter "
+                      f"({count}→0)")
+            count = 0
+        
+        time.sleep(0.01)
+    
+    if running:
+        print(f"✓ Position stable at {motor.position:.3f} rad")
+        return True
+    else:
+        print("✗ Interrupted")
+        return False
+
+# Use it
+with Motor('AK80-64', motorId=1, autoInit=True) as motor:
+    if move_and_settle(motor, 1.57, tolerance=0.03, stable_cycles=20):
+        print("Ready for next operation")
+```
+
+### Example 6: Multi-Motor Synchronization
+
+```python
+from TMotorAPI import Motor
+import time
+import signal
+
+running = True
+signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
+
+# Create two motors
+with Motor('AK80-64', motorId=1, canInterface='can0') as motor1, \
+     Motor('AK80-64', motorId=2, canInterface='can0') as motor2:
+    
+    print("Synchronizing two motors...")
+    
+    # Synchronous sine wave motion
+    import numpy as np
+    
+    t = 0.0
+    dt = 0.01  # 100 Hz
+    
+    while running:
+        # Calculate synchronized positions
+        angle1 = np.sin(2 * np.pi * 0.5 * t)  # 0.5 Hz sine
+        angle2 = np.cos(2 * np.pi * 0.5 * t)  # 0.5 Hz cosine
+        
+        # Set commands for both motors
+        motor1.set_position(angle1, kp=10, kd=2)
+        motor2.set_position(angle2, kp=10, kd=2)
+        
+        # Update both motors
+        motor1.update()
+        motor2.update()
+        
+        print(f"Motor1: {motor1.position:.3f} rad, "
+              f"Motor2: {motor2.position:.3f} rad")
+        
+        time.sleep(dt)
+        t += dt
+    
+    print("Stopped")
+```
+
+### Example 7: Implementing Custom Trajectory
+
+```python
+from TMotorAPI import Motor, TrajectoryGenerator
+import time
+import signal
+
+running = True
+signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
 
 with Motor('AK80-64', motorId=1, autoInit=True) as motor:
-    target = 1.57
+    # Trajectory parameters
+    start_pos = 0.0
+    end_pos = 1.57
     duration = 2.0
     
-    # Test all trajectory types
-    trajectories = ['minimum_jerk', 'cubic', 'linear']
+    print(f"Following trajectory: {start_pos} → {end_pos} rad "
+          f"in {duration}s")
     
-    for traj_type in trajectories:
-        print(f"\nTesting {traj_type} trajectory...")
+    # Execute trajectory
+    start_time = time.time()
+    
+    while running:
+        t = time.time() - start_time
         
-        motor.set_position(0.0, duration=1.0)  # Reset
-        time.sleep(0.5)
+        if t > duration:
+            break
         
-        motor.set_position(
-            targetPos=target,
-            duration=duration,
-            trajectoryType=traj_type
+        # Calculate trajectory point
+        target_pos, target_vel = TrajectoryGenerator.minimum_jerk(
+            startPos=start_pos,
+            endPos=end_pos,
+            currentTime=t,
+            totalDuration=duration
         )
-        time.sleep(0.5)
+        
+        # Send command
+        motor.set_position(target_pos, kp=10, kd=2)
+        motor.update()
+        
+        print(f"t={t:.2f}s: Target={target_pos:.3f}, "
+              f"Actual={motor.position:.3f}, "
+              f"Error={abs(motor.position - target_pos):.4f}")
+        
+        time.sleep(0.01)
+    
+    print(f"✓ Trajectory complete!")
+    print(f"Final position: {motor.position:.3f} rad")
 ```
+
+---
+
+## 🔄 Migration from v4.3
+
+### Key Changes
+
+| Feature | v4.3 | v5.0 |
+|---------|------|------|
+| **Control** | Blocking | Non-blocking |
+| **Duration** | `duration=2.0` | Removed |
+| **Settling** | Automatic | User implements |
+| **Timing** | Library controlled | User controlled |
+| **update()** | Called internally | User calls explicitly |
+
+### Migration Steps
+
+#### 1. Remove Duration Parameters
+
+**Before (v4.3):**
+```python
+motor.set_position(1.57, duration=2.0)  # Blocks for 2s
+motor.set_velocity(3.0, duration=1.0)   # Blocks for 1s
+motor.set_torque(5.0, duration=0.5)     # Blocks for 0.5s
+```
+
+**After (v5.0):**
+```python
+# Implement your own control loop
+while running:
+    motor.set_position(1.57)
+    motor.update()
+    time.sleep(0.01)  # You control timing
+```
+
+#### 2. Add Control Loop
+
+**Before (v4.3):**
+```python
+with motor:
+    motor.set_position(1.57, duration=2.0)
+    motor.set_position(0.0, duration=2.0)
+    # Motor automatically handles timing
+```
+
+**After (v5.0):**
+```python
+with motor:
+    # Move to 1.57
+    for _ in range(200):  # 2 seconds at 100 Hz
+        motor.set_position(1.57)
+        motor.update()
+        time.sleep(0.01)
+    
+    # Move to 0.0
+    for _ in range(200):
+        motor.set_position(0.0)
+        motor.update()
+        time.sleep(0.01)
+```
+
+#### 3. Implement Custom Settling (if needed)
+
+**Before (v4.3):**
+```python
+# Automatic settling
+motor.set_position(1.57, duration=0.0)  # Waits until settled
+```
+
+**After (v5.0):**
+```python
+# Implement your own settling
+def wait_settled(motor, target, tolerance=0.05, cycles=10):
+    count = 0
+    while count < cycles:
+        motor.set_position(target)
+        motor.update()
+        
+        if abs(motor.position - target) < tolerance:
+            count += 1
+        else:
+            count = 0
+        
+        time.sleep(0.01)
+
+wait_settled(motor, 1.57)
+```
+
+#### 4. Remove Settling Config
+
+**Before (v4.3):**
+```python
+config = MotorConfig(
+    motorType='AK80-64',
+    motorId=1,
+    stepTimeout=5.0,        # Removed in v5.0
+    stepTolerance=0.05,     # Removed in v5.0
+    stepSettlingTime=0.1    # Removed in v5.0
+)
+```
+
+**After (v5.0):**
+```python
+config = MotorConfig(
+    motorType='AK80-64',
+    motorId=1,
+    # Only these parameters remain
+    maxTemperature=50.0,
+    defaultKp=10.0,
+    defaultKd=0.5
+)
+```
+
+### Why the Change?
+
+**v4.3 Problems:**
+- ❌ Blocking calls limit flexibility
+- ❌ Hard to implement custom control
+- ❌ Difficult multi-motor coordination
+- ❌ Can't react to sensors in real-time
+
+**v5.0 Advantages:**
+- ✅ Full control over timing
+- ✅ Easy custom algorithms
+- ✅ Simple multi-motor sync
+- ✅ Real-time sensor integration
+- ✅ Cleaner code structure
+
+---
 
 ## 🔧 Troubleshooting
 
@@ -686,13 +1250,15 @@ sudo reboot
 
 ### Motor Not Responding
 
-1. **Check power**: Verify motor power supply (24-48V depending on model)
-2. **Check CAN bus**: Ensure proper termination resistors (120Ω at each end)
-3. **Check ID**: Verify motor CAN ID matches code
-4. **Check enable**: Make sure `enable()` was called or using `with` statement
+**Checklist:**
+1. ✅ Power supply (24-48V depending on model)
+2. ✅ CAN bus termination (120Ω at each end)
+3. ✅ Correct motor CAN ID
+4. ✅ Motor enabled (`enable()` or `with` statement)
+5. ✅ Calling `update()` in loop
 
+**Debug:**
 ```python
-# Debug mode
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
@@ -704,47 +1270,49 @@ if motor.check_connection():
     print("✓ Motor connected")
 else:
     print("✗ Motor not responding")
+    print("Check power, CAN bus, and motor ID")
 ```
 
-### Position Not Settling (v4.3)
+### update() Not Called
 
-If step commands timeout without settling:
-
+**Problem:**
 ```python
-# Increase settling time or tolerance
-config = MotorConfig(
-    motorType='AK80-64',
-    motorId=1,
-    stepTolerance=0.1,        # Relax tolerance
-    stepSettlingTime=0.05,    # Reduce required stability time
-    stepTimeout=10.0          # Allow more time
-)
-
-motor = Motor(config=config)
+# Wrong: Command set but never sent
+motor.set_position(1.57)
+# Motor won't move!
 ```
 
-Or disable settling check:
+**Solution:**
 ```python
-config.stepSettlingTime = 0.0  # No settling verification
+# Correct: Always call update() after command
+motor.set_position(1.57)
+motor.update()  # This actually sends the command
 ```
 
-### Drift with Feedforward Torque
+### Position Not Reaching Target
 
-If position drifts when using feedforward:
+In v5.0, there's no automatic settling. Implement your own:
 
 ```python
-# Increase settling time to verify stability
-config = MotorConfig(
-    motorType='AK80-64',
-    motorId=1,
-    stepSettlingTime=0.2,  # Longer verification
-    stepTolerance=0.03     # Tighter tolerance
-)
+def wait_for_position(motor, target, tolerance=0.05, timeout=5.0):
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        motor.set_position(target)
+        motor.update()
+        
+        if abs(motor.position - target) < tolerance:
+            return True
+        
+        time.sleep(0.01)
+    
+    return False
 
-# Verify feedforward torque calculation
-def gravity_torque(angle):
-    # Double-check your physics!
-    return mass * g * length * np.cos(angle)
+# Use it
+if wait_for_position(motor, 1.57):
+    print("Position reached!")
+else:
+    print("Timeout!")
 ```
 
 ### Permission Denied
@@ -753,85 +1321,67 @@ def gravity_torque(angle):
 # Add user to dialout group
 sudo usermod -a -G dialout $USER
 
-# Setup sudo permissions for CAN commands
+# Setup sudo permissions for CAN
 sudo visudo
 # Add: your_username ALL=(ALL) NOPASSWD: /sbin/ip
 
-# Logout and login for changes to take effect
+# Logout and login
 ```
 
 ### High Temperature Warning
 
 ```python
-# Lower temperature threshold
-config = MotorConfig(
-    motorType='AK80-64',
-    motorId=1,
-    maxTemperature=45.0  # Lower warning threshold
-)
-
-# Monitor temperature during operation
-state = motor.update()
-if state['temperature'] > 50:
-    print("⚠ High temperature!")
-    motor.disable()
+# Monitor temperature in control loop
+while running:
+    motor.set_torque(5.0)
+    motor.update()
+    
+    if motor.temperature > 55.0:
+        print("⚠ High temperature! Stopping...")
+        motor.stop()
+        break
+    
+    time.sleep(0.01)
 ```
 
 ### CAN Bus Errors
 
 ```bash
-# Check CAN bus status
+# Check CAN status
 ip -details -statistics link show can0
 
-# Look for errors
-# RX-ERR and TX-ERR should be 0
+# Look for errors (RX-ERR and TX-ERR should be 0)
 
-# Reset CAN interface if needed
+# Reset CAN if needed
 sudo ip link set can0 down
 sudo ip link set can0 up type can bitrate 1000000
 
-# Check for bus-off state
-# If bus-off, check wiring and termination resistors
+# Check wiring and termination if errors persist
 ```
 
-### Settling Counter Keeps Resetting
+### zero_position() Causes Movement
 
-```
-Settling: 10% (1/10)
-Settling: 20% (2/10)
-⚠ Drift detected! Resetting settling counter (3→0)
-Settling: 10% (1/10)
-...
-```
+This was a bug in v4.3, **fixed in v5.0**!
 
-**Possible causes:**
-1. **External disturbances**: Vibration, load changes
-2. **Incorrect feedforward**: Check torque calculations
-3. **Low control gains**: Increase `kp` and `kd`
-4. **Too strict tolerance**: Increase `stepTolerance`
-
-**Solutions:**
 ```python
-# Solution 1: Increase control gains
-motor.set_position(1.57, kp=20.0, kd=2.0)
-
-# Solution 2: Relax tolerance
-config.stepTolerance = 0.1
-
-# Solution 3: Reduce settling requirement
-config.stepSettlingTime = 0.05
+# v5.0: Safe zeroing
+motor.zero_position()
+# ✓ Position command is reset to 0
+# ✓ Motor stays in place
 ```
+
+---
 
 ## 🏗️ Architecture
 
 ```
 User Application
        ↓
-   TMotorAPI v4.3 (High-level wrapper)
+   TMotorAPI v5.0 (Non-blocking wrapper)
        ↓ uses
 TMotorCANControl (Low-level CAN driver)
        ↓
-   SocketCAN
+   SocketCAN (Linux kernel)
        ↓
    CAN Hardware (MCP2515, etc.)
        ↓
@@ -839,108 +1389,99 @@ TMotorCANControl (Low-level CAN driver)
 ```
 
 **Design Philosophy:**
-- **TMotorCANControl**: Direct MIT CAN protocol implementation (low-level)
-- **TMotorAPI**: High-level abstractions with safety features (user-friendly)
-- **v4.3**: Enhanced robustness with settling verification and feedforward support
+- **TMotorCANControl**: Direct MIT CAN protocol (low-level)
+- **TMotorAPI v5.0**: Non-blocking, real-time control (high-level)
+- **User Application**: Full control over timing and logic
 
-## 🎓 Understanding Settling Time Logic
-
-### Why Settling Time?
-
-**Problem without settling time:**
-```python
-# Simple tolerance check
-while abs(position - target) > tolerance:
-    send_command(target)
-    
-# Returns as soon as within tolerance
-# But position might still be moving!
-# With feedforward torque, position can drift after "reaching" target
-```
-
-**Solution with settling time (v4.3):**
-```python
-# Must maintain tolerance for N consecutive cycles
-settling_counter = 0
-while settling_counter < required_cycles:
-    if abs(position - target) < tolerance:
-        settling_counter += 1
-    else:
-        settling_counter = 0  # Reset if drift detected
-    send_command(target)
-    
-# Position is truly stable!
-```
-
-### Settling Time Calculation
-
-```
-settling_time = 0.1s (default)
-control_frequency = 100 Hz
-required_cycles = settling_time * control_frequency = 10 cycles
-
-Position must stay within tolerance for 10 consecutive cycles.
-```
-
-### Tuning Guidelines
-
-| Application | Tolerance | Settling Time | Notes |
-|------------|-----------|---------------|-------|
-| High-speed | 0.1 rad | 0.05s | Fast, less strict |
-| General | 0.05 rad | 0.1s | Balanced (default) |
-| Precision | 0.03 rad | 0.2s | Tight, well-verified |
-| Ultra-precision | 0.01 rad | 0.5s | Very strict, slow |
+---
 
 ## 📊 Performance Characteristics
 
 ### Control Loop Timing
-- **Frequency**: 100 Hz (10ms period)
-- **Step command threshold**: 0.02s
-- **Default settling**: 0.1s (10 cycles)
 
-### Typical Step Response Time
+**Recommended frequencies:**
+- **100 Hz (10ms)**: General purpose, good balance
+- **200 Hz (5ms)**: High performance applications
+- **500 Hz (2ms)**: Research, high-speed control
+- **1000 Hz (1ms)**: Maximum performance (requires fast CPU)
+
+**Example:**
+```python
+# 100 Hz control
+while running:
+    motor.set_position(target)
+    motor.update()
+    time.sleep(0.01)  # 10ms
+
+# 500 Hz control
+while running:
+    motor.set_torque(torque)
+    motor.update()
+    time.sleep(0.002)  # 2ms
 ```
-Without feedforward:   0.15 - 0.30s
-With feedforward:      0.20 - 0.40s (includes settling verification)
-Trajectory (2s):       2.0 - 2.1s
-```
+
+### Typical Response Time
+
+| Control Mode | Response Time |
+|--------------|---------------|
+| Torque | 10-20 ms |
+| Velocity | 50-100 ms |
+| Position (PD) | 100-300 ms |
+
+*Response times depend on control gains and system dynamics*
+
+---
 
 ## 📝 License
 
 MIT License - See [LICENSE](LICENSE) file for details.
+
+---
 
 ## 🙏 Acknowledgments
 
 This library is built on [TMotorCANControl](https://github.com/neurobionics/TMotorCANControl) by the Neurobionics Lab.
 
 **Special thanks to:**
-- [Neurobionics Lab](https://github.com/neurobionics) for the underlying CAN control library
+- [Neurobionics Lab](https://github.com/neurobionics) for TMotorCANControl
 - MIT for the open CAN protocol specification
 - T-Motor for excellent motor hardware
+
+---
 
 ## 📞 Support
 
 - **Issues**: [GitHub Issues](https://github.com/KR70004526/TMotorAPI/issues)
 - **Base Library**: [TMotorCANControl](https://github.com/neurobionics/TMotorCANControl)
-- **Documentation**: This README and code comments
+- **Documentation**: This README
+
+---
 
 ## 🔄 Version History
 
-### v4.3 (Current)
-- ✨ Added settling time logic for step commands
-- ✨ Added feedforward torque support in `set_position()`
-- 🔧 Renamed `track_trajectory()` → `set_position()`
-- 🐛 Fixed drift issues with feedforward torque
-- 📝 Enhanced logging with settling progress
-- 🎯 More robust position control
+### v5.0 (Current - Major Release)
+- 🚀 **Non-blocking control design**
+- ✂️ Removed `duration` parameter from all control methods
+- ✂️ Removed automatic settling time logic
+- ✂️ Removed `stepTimeout`, `stepTolerance`, `stepSettlingTime` parameters
+- 🐛 Fixed `zero_position()` causing unwanted movement
+- ✨ Added `stop()` method for emergency stop
+- 🎯 Simplified API for real-time applications
+- 📝 User now controls timing with `update()` loop
 
-### v4.2 (Previous)
+### v4.3 (Previous)
+- Settling time logic for step commands
+- Feedforward torque support
+- Blocking control with duration parameter
+- Automatic position settling verification
+
+### v4.2
 - Basic trajectory control
-- Simple tolerance checking
 - Context manager support
+- Simple tolerance checking
 
 ---
 
 **Happy Controlling! 🚀**
 
-*Now with robust settling verification!*
+*Now with non-blocking design for real-time control!*
