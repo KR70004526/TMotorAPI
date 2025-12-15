@@ -1,5 +1,5 @@
 """
-TMotor Control API v5.0 - Non-blocking Control
+TMotor Control API v5.0 - Non-blocking Control with Soft Limit
 Based on TMotorCANControl by Neurobionics Lab
 
 Changes from v4.3:
@@ -7,6 +7,7 @@ Changes from v4.3:
 - Removed unused variables (stepTimeout, stepTolerance, stepSettlingTime)
 - Fixed zero_position() causing unwanted movement
 - Added stop() method for emergency stop
+- Added soft limit feature with smooth stopping (v5.0)
 
 Author: TMotor Control Team
 License: MIT
@@ -31,7 +32,7 @@ except ImportError:
 
 
 # ==================== Constants ====================
-ZERO_POSITION_SETTLE_TIME = 1.0  # 영점 설정 후 대기 시간 (EEPROM 저장)
+ZERO_POSITION_SETTLE_TIME = 1.0  # Wait time after zeroing (EEPROM save)
 CAN_INTERFACE_PATTERN = re.compile(r'^can\d+$')
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
@@ -52,6 +53,11 @@ class MotorConfig:
         maxTemperature: Maximum safe MOSFET temperature (°C)
         defaultKp: Default position gain (Nm/rad)
         defaultKd: Default velocity gain (Nm/(rad/s))
+        softLimitMin: Minimum position limit (rad), None to disable
+        softLimitMax: Maximum position limit (rad), None to disable
+        softZone: Damping increase zone near limits (rad)
+        baseKd: Base damping in normal zone
+        maxKd: Maximum damping at limits (bumper effect)
     """
     motorType: str = 'AK70-10'
     motorId: int = 1
@@ -63,6 +69,13 @@ class MotorConfig:
     # Default control gains
     defaultKp: float = 10.0
     defaultKd: float = 0.5
+    
+    # Soft limit parameters
+    softLimitMin: Optional[float] = None
+    softLimitMax: Optional[float] = None
+    softZone: float = 0.2
+    baseKd: float = 2.0
+    maxKd: float = 20.0
 
     def __post_init__(self):
         """Validate configuration"""
@@ -158,12 +171,22 @@ class TrajectoryGenerator:
 # ==================== Motor Class ====================
 class Motor:
     """
-    High-level motor control API (Non-blocking design)
+    High-level motor control API (Non-blocking design with Soft Limit)
     
     Usage:
+        # Basic usage
         with Motor('AK70-10', motorId=1) as motor:
             while running:
                 motor.set_position(target)
+                motor.update()
+                time.sleep(0.01)
+        
+        # With soft limit
+        with Motor('AK70-10', motorId=1, 
+                   softLimitMin=-1.57, softLimitMax=1.57) as motor:
+            motor.set_soft_limit(-1.57, 1.57)
+            while running:
+                motor.set_position_smooth(target)
                 motor.update()
                 time.sleep(0.01)
     """
@@ -176,6 +199,12 @@ class Motor:
                  autoInit: Optional[bool] = None,
                  maxTemperature: Optional[float] = None,
                  config: Optional[MotorConfig] = None,
+                 # Soft limit parameters
+                 softLimitMin: Optional[float] = None,
+                 softLimitMax: Optional[float] = None,
+                 softZone: Optional[float] = None,
+                 baseKd: Optional[float] = None,
+                 maxKd: Optional[float] = None,
                  **kwargs):
         """Initialize Motor object"""
         
@@ -196,6 +225,16 @@ class Motor:
                 params['autoInit'] = autoInit
             if maxTemperature is not None:
                 params['maxTemperature'] = maxTemperature
+            if softLimitMin is not None:
+                params['softLimitMin'] = softLimitMin
+            if softLimitMax is not None:
+                params['softLimitMax'] = softLimitMax
+            if softZone is not None:
+                params['softZone'] = softZone
+            if baseKd is not None:
+                params['baseKd'] = baseKd
+            if maxKd is not None:
+                params['maxKd'] = maxKd
             
             params.update(kwargs)
             self.config = MotorConfig(**params)
@@ -238,18 +277,22 @@ class Motor:
     # ==================== Properties ====================
     @property
     def position(self) -> float:
+        """Current position (rad)"""
         return self._lastPosition
     
     @property
     def velocity(self) -> float:
+        """Current velocity (rad/s)"""
         return self._lastVelocity
     
     @property
     def torque(self) -> float:
+        """Current torque (Nm)"""
         return self._lastTorque
     
     @property
     def temperature(self) -> float:
+        """Current MOSFET temperature (°C)"""
         return self._lastTemperature
     
     # ==================== Power Control ====================
@@ -285,9 +328,11 @@ class Motor:
             logging.info("=" * 50)
     
     def is_power_on(self) -> bool:
+        """Check if motor is powered on"""
         return self._isEnabled
     
     def get_uptime(self) -> float:
+        """Get motor uptime in seconds"""
         if self._isEnabled:
             return time.time() - self._powerOnTime
         return 0.0
@@ -311,6 +356,109 @@ class Motor:
             'torque': self._lastTorque,
             'temperature': self._lastTemperature
         }
+    
+    # ==================== Soft Limit Methods ====================
+    def set_soft_limit(self, 
+                      min_pos: float, 
+                      max_pos: float,
+                      soft_zone: float = 0.2,
+                      base_kd: float = 2.0,
+                      max_kd: float = 20.0) -> None:
+        """
+        Set soft limit range
+        
+        Args:
+            min_pos: Minimum position limit (rad)
+            max_pos: Maximum position limit (rad)
+            soft_zone: Damping increase zone near limits (rad)
+            base_kd: Base damping in normal zone
+            max_kd: Maximum damping at limits (bumper effect)
+        
+        Example:
+            motor.set_soft_limit(-1.57, 1.57)  # -90° to +90°
+        """
+        self.config.softLimitMin = min_pos
+        self.config.softLimitMax = max_pos
+        self.config.softZone = soft_zone
+        self.config.baseKd = base_kd
+        self.config.maxKd = max_kd
+        
+        logging.info(f"Soft limit set: {min_pos:.2f} ~ {max_pos:.2f} rad, "
+                    f"zone: {soft_zone:.2f} rad")
+    
+    def set_position_smooth(self,
+                           targetPos: float,
+                           kp: Optional[float] = None,
+                           feedTor: float = 0.0,
+                           min_pos: Optional[float] = None,
+                           max_pos: Optional[float] = None,
+                           soft_zone: Optional[float] = None,
+                           base_kd: Optional[float] = None,
+                           max_kd: Optional[float] = None) -> None:
+        """
+        Set position command with soft limit and smooth stopping
+        
+        Damping automatically increases near limits for smooth deceleration.
+        
+        Args:
+            targetPos: Target position (rad)
+            kp: Position gain (Nm/rad), None to use default
+            feedTor: Feedforward torque (Nm)
+            min_pos: Minimum position (rad), None to use config
+            max_pos: Maximum position (rad), None to use config
+            soft_zone: Damping increase zone (rad), None to use config
+            base_kd: Base damping, None to use config
+            max_kd: Maximum damping at limits, None to use config
+        
+        Usage:
+            # Method 1: Pre-configure limits
+            motor.set_soft_limit(-1.57, 1.57)
+            motor.set_position_smooth(target)
+            motor.update()
+            
+            # Method 2: Specify limits each time
+            motor.set_position_smooth(target, min_pos=-1.57, max_pos=1.57)
+            motor.update()
+        
+        Raises:
+            ValueError: If soft limits are not configured
+        """
+        # Determine parameters
+        min_pos = min_pos if min_pos is not None else self.config.softLimitMin
+        max_pos = max_pos if max_pos is not None else self.config.softLimitMax
+        soft_zone = soft_zone if soft_zone is not None else self.config.softZone
+        base_kd = base_kd if base_kd is not None else self.config.baseKd
+        max_kd = max_kd if max_kd is not None else self.config.maxKd
+        kp = kp if kp is not None else self.config.defaultKp
+        
+        # Check if soft limits are configured
+        if min_pos is None or max_pos is None:
+            raise ValueError(
+                "Soft limits not configured. "
+                "Call set_soft_limit() first or specify min_pos/max_pos."
+            )
+        
+        # Clamp target position to limits
+        safe_pos = max(min_pos, min(max_pos, targetPos))
+        
+        # Get current position
+        current = self.position
+        
+        # Calculate damping based on proximity to limits
+        kd = base_kd
+        
+        # Near upper limit
+        if current > max_pos - soft_zone:
+            progress = (current - (max_pos - soft_zone)) / soft_zone
+            kd = base_kd + (max_kd - base_kd) * min(progress, 1.0)
+        
+        # Near lower limit
+        elif current < min_pos + soft_zone:
+            progress = ((min_pos + soft_zone) - current) / soft_zone
+            kd = base_kd + (max_kd - base_kd) * min(progress, 1.0)
+        
+        # Send position command with adjusted damping
+        self.set_position(safe_pos, kp=kp, kd=kd, feedTor=feedTor)
     
     # ==================== Control Commands ====================
     def set_position(self,
@@ -405,7 +553,7 @@ class Motor:
         self._manager.position = 0.0
         self._manager.torque = 0.0
         
-        # 4. 상태 업데이트
+        # Update state
         self.update()
         
         logging.info(f"✓ Encoder zeroed (position: {self._lastPosition:.4f} rad)")
