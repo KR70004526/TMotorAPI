@@ -53,11 +53,6 @@ class MotorConfig:
         maxTemperature: Maximum safe MOSFET temperature (°C)
         defaultKp: Default position gain (Nm/rad)
         defaultKd: Default velocity gain (Nm/(rad/s))
-        softLimitMin: Minimum position limit (rad), None to disable
-        softLimitMax: Maximum position limit (rad), None to disable
-        softZone: Damping increase zone near limits (rad)
-        baseKd: Base damping in normal zone
-        maxKd: Maximum damping at limits (bumper effect)
     """
     motorType: str = 'AK70-10'
     motorId: int = 1
@@ -69,13 +64,6 @@ class MotorConfig:
     # Default control gains
     defaultKp: float = 10.0
     defaultKd: float = 0.5
-    
-    # Soft limit parameters
-    softLimitMin: Optional[float] = None
-    softLimitMax: Optional[float] = None
-    softZone: float = 0.2
-    baseKd: float = 2.0
-    maxKd: float = 20.0
 
     def __post_init__(self):
         """Validate configuration"""
@@ -182,8 +170,7 @@ class Motor:
                 time.sleep(0.01)
         
         # With soft limit
-        with Motor('AK70-10', motorId=1, 
-                   softLimitMin=-1.57, softLimitMax=1.57) as motor:
+        with Motor('AK70-10', motorId=1) as motor:
             motor.set_soft_limit(-1.57, 1.57)
             while running:
                 motor.set_position_smooth(target)
@@ -199,12 +186,6 @@ class Motor:
                  autoInit: Optional[bool] = None,
                  maxTemperature: Optional[float] = None,
                  config: Optional[MotorConfig] = None,
-                 # Soft limit parameters
-                 softLimitMin: Optional[float] = None,
-                 softLimitMax: Optional[float] = None,
-                 softZone: Optional[float] = None,
-                 baseKd: Optional[float] = None,
-                 maxKd: Optional[float] = None,
                  **kwargs):
         """Initialize Motor object"""
         
@@ -225,16 +206,6 @@ class Motor:
                 params['autoInit'] = autoInit
             if maxTemperature is not None:
                 params['maxTemperature'] = maxTemperature
-            if softLimitMin is not None:
-                params['softLimitMin'] = softLimitMin
-            if softLimitMax is not None:
-                params['softLimitMax'] = softLimitMax
-            if softZone is not None:
-                params['softZone'] = softZone
-            if baseKd is not None:
-                params['baseKd'] = baseKd
-            if maxKd is not None:
-                params['maxKd'] = maxKd
             
             params.update(kwargs)
             self.config = MotorConfig(**params)
@@ -249,6 +220,13 @@ class Motor:
         self._lastVelocity = 0.0
         self._lastTorque = 0.0
         self._lastTemperature = 0.0
+        
+        # Soft limit parameters (internal only)
+        self._softLimitMin: Optional[float] = None
+        self._softLimitMax: Optional[float] = None
+        self._softZone: float = 0.2
+        self._baseKd: float = 2.0
+        self._maxKd: float = 20.0
         
         # Setup CAN interface
         if self.config.autoInit:
@@ -377,11 +355,11 @@ class Motor:
         Example:
             motor.set_soft_limit(-1.57, 1.57)  # -90° to +90°
         """
-        self.config.softLimitMin = min_pos
-        self.config.softLimitMax = max_pos
-        self.config.softZone = soft_zone
-        self.config.baseKd = base_kd
-        self.config.maxKd = max_kd
+        self._softLimitMin = min_pos
+        self._softLimitMax = max_pos
+        self._softZone = soft_zone
+        self._baseKd = base_kd
+        self._maxKd = max_kd
         
         logging.info(f"Soft limit set: {min_pos:.2f} ~ {max_pos:.2f} rad, "
                     f"zone: {soft_zone:.2f} rad")
@@ -404,11 +382,11 @@ class Motor:
             targetPos: Target position (rad)
             kp: Position gain (Nm/rad), None to use default
             feedTor: Feedforward torque (Nm)
-            min_pos: Minimum position (rad), None to use config
-            max_pos: Maximum position (rad), None to use config
-            soft_zone: Damping increase zone (rad), None to use config
-            base_kd: Base damping, None to use config
-            max_kd: Maximum damping at limits, None to use config
+            min_pos: Minimum position (rad), None to use configured value
+            max_pos: Maximum position (rad), None to use configured value
+            soft_zone: Damping increase zone (rad), None to use configured value
+            base_kd: Base damping, None to use configured value
+            max_kd: Maximum damping at limits, None to use configured value
         
         Usage:
             # Method 1: Pre-configure limits
@@ -424,11 +402,11 @@ class Motor:
             ValueError: If soft limits are not configured
         """
         # Determine parameters
-        min_pos = min_pos if min_pos is not None else self.config.softLimitMin
-        max_pos = max_pos if max_pos is not None else self.config.softLimitMax
-        soft_zone = soft_zone if soft_zone is not None else self.config.softZone
-        base_kd = base_kd if base_kd is not None else self.config.baseKd
-        max_kd = max_kd if max_kd is not None else self.config.maxKd
+        min_pos = min_pos if min_pos is not None else self._softLimitMin
+        max_pos = max_pos if max_pos is not None else self._softLimitMax
+        soft_zone = soft_zone if soft_zone is not None else self._softZone
+        base_kd = base_kd if base_kd is not None else self._baseKd
+        max_kd = max_kd if max_kd is not None else self._maxKd
         kp = kp if kp is not None else self.config.defaultKp
         
         # Check if soft limits are configured
