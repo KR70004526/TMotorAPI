@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "TMotorAPI"
-version = "0.1.0"
+version = "0.1.1"
 description = "High-level TMotor control API for TMotorCANControl with CubeMars T-Motor"
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = ["TMotorCANControl>=1.2", "python-can>=4.6"]
+dependencies = ["TMotorCANControl>=1.2", "python-can>=4.6",
+                "TMotorCANControl @ git+https://github.com/KR70004526/TMotorCANControl.git@v0.1.0-multican"]
 authors = [{name = "KR70004526"}]
 
 [tool.setuptools.packages.find]
