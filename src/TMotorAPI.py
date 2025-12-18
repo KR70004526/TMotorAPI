@@ -237,7 +237,10 @@ class Motor:
             self._manager = TMotorManager_mit_can(
                 motor_type=self.config.motorType,
                 motor_ID=self.config.motorId,
-                max_mosfett_temp=int(self.config.maxTemperature)
+                max_mosfett_temp=int(self.config.maxTemperature),
+                can_interface=self.config.canInterface,
+                can_bitrate=self.config.bitrate,
+                can_bring_up=False, 
             )
             logging.info(f"✓ Motor connected: {self.config.motorType} ID={self.config.motorId}")
         except Exception as e:
