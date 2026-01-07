@@ -65,24 +65,33 @@ class MotorConfig:
     defaultKp: float = 10.0
     defaultKd: float = 0.5
 
+    # CAN Interface Backend
+    canBackend: str = "socketcan"   # Linux -> socketcan | Window -> gs_usb
+    canChannel: object = "can0"     # socketcan -> can0 | Window -> 0
+
     def __post_init__(self):
-        """Validate configuration"""
         if not 0 <= self.motorId <= 127:
             raise ValueError(f"motorId must be 0-127, got {self.motorId}")
-        if not CAN_INTERFACE_PATTERN.match(self.canInterface):
-            raise ValueError(f"Invalid CAN interface: {self.canInterface}")
+
+        # backend별 channel 타입 검증
+        if self.canBackend in ("socketcan", "socketcan_native"):
+            if not isinstance(self.canChannel, str) or not CAN_INTERFACE_PATTERN.match(self.canChannel):
+                raise ValueError(f"SocketCAN channel must be like 'can0', got {self.canChannel}")
+        elif self.canBackend == "gs_usb":
+            if not isinstance(self.canChannel, int):
+                raise ValueError(f"gs_usb channel must be int (e.g., 0), got {self.canChannel}")
+        else:
+            raise ValueError(f"Unsupported canBackend: {self.canBackend}")
 
 
 # ==================== CAN Interface ====================
 class CANInterface:
-    """CAN interface setup utility"""
-    
     @staticmethod
-    def setup_interface(canInterface: Optional[str] = None, 
+    def setup_interface(canInterface: Optional[str] = None,
                         bitrate: Optional[int] = None,
                         config: Optional[MotorConfig] = None) -> bool:
         """Setup CAN interface using system commands"""
-        
+
         if config is not None:
             _interface = canInterface if canInterface is not None else config.canInterface
             _bitrate = bitrate if bitrate is not None else config.bitrate
@@ -90,18 +99,28 @@ class CANInterface:
             _interface = canInterface if canInterface is not None else 'can0'
             _bitrate = bitrate if bitrate is not None else 1000000
 
+        # ✅ OS/백엔드 가드 추가: Windows에서는 ip link 자체가 의미 없음
+        if os.name == "nt":
+            logging.info(f"Skipping CAN bring-up on Windows (interface={_interface})")
+            return True
+
+        # ✅ socketcan 이름이 아니면(예: gs_usb) ip link 스킵
+        #    (현재 코드 구조상 _interface는 'can0' 같은 채널 문자열이어야 함)
         if not CAN_INTERFACE_PATTERN.match(_interface):
-            raise ValueError(f"Invalid CAN interface: {_interface}")
-        
+            # 원래는 ValueError였지만, "전체 유지"가 목적이면 여기서 스킵이 더 실용적
+            # 그래도 명시적으로 막고 싶으면 기존 ValueError 유지해도 됨.
+            logging.info(f"Skipping CAN bring-up for non-socketcan interface name: {_interface}")
+            return True
+
         try:
             subprocess.run(['sudo', 'ip', 'link', 'set', _interface, 'down'],
-                         check=True, capture_output=True)
+                           check=True, capture_output=True)
             subprocess.run(['sudo', 'ip', 'link', 'set', _interface,
-                          'type', 'can', 'bitrate', str(_bitrate)],
-                         check=True, capture_output=True)
+                            'type', 'can', 'bitrate', str(_bitrate)],
+                           check=True, capture_output=True)
             subprocess.run(['sudo', 'ip', 'link', 'set', _interface, 'up'],
-                         check=True, capture_output=True)
-            
+                           check=True, capture_output=True)
+
             logging.info(f"✓ CAN {_interface} ready (bitrate: {_bitrate})")
             return True
         except subprocess.CalledProcessError as e:
@@ -238,9 +257,10 @@ class Motor:
                 motor_type=self.config.motorType,
                 motor_ID=self.config.motorId,
                 max_mosfett_temp=int(self.config.maxTemperature),
-                can_interface=self.config.canInterface,
+                can_interface=self.config.canBackend,      # 핵심
+                can_channel=self.config.canChannel,        # 핵심
                 can_bitrate=self.config.bitrate,
-                can_bring_up=False, 
+                can_bring_up=False,
             )
             logging.info(f"✓ Motor connected: {self.config.motorType} ID={self.config.motorId}")
         except Exception as e:
