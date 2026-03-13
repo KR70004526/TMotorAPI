@@ -1,1487 +1,476 @@
 # TMotorAPI v5.0
 
-A high-level Python library for controlling AK-series T-Motors using the MIT CAN protocol.
+A high-level Python library for controlling AK-series T-Motors using the MIT CAN protocol.  
+Based on [TMotorCANControl](https://github.com/neurobionics/TMotorCANControl) by Neurobionics Lab.
 
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-5.0-green.svg)](https://github.com/KR70004526/TMotorAPI)
 
-## 🆕 What's New in v5.0
+---
 
-### Non-Blocking Control Design 🚀
-Complete redesign for **real-time control applications** with non-blocking commands.
+## What's New in v5.0
 
-**Major Changes from v4.3:**
+v4.3 대비 주요 변경사항:
 
-#### ✅ Removed Duration Parameter
-```python
-# v4.3 (Blocking)
-motor.set_position(1.57, duration=2.0)  # Blocks for 2 seconds
-motor.set_torque(5.0, duration=1.0)     # Blocks for 1 second
-
-# v5.0 (Non-blocking) ⭐
-motor.set_position(1.57)  # Returns immediately
-motor.set_torque(5.0)     # Returns immediately
-# User controls timing with update() loop
-```
-
-#### ✅ Simplified Control Flow
-```python
-# v5.0: User-controlled loop
-while running:
-    motor.set_torque(calculate_torque())  # Set command
-    motor.update()                         # Send & receive
-    time.sleep(0.01)                       # 100 Hz control
-```
-
-#### ✅ Removed Settling Time Logic
-- No automatic settling verification
-- User implements custom settling if needed
-- Removed: `stepTimeout`, `stepTolerance`, `stepSettlingTime`
-
-#### ✅ Fixed zero_position() Bug
-```python
-# v4.3: Could cause unwanted movement after zeroing
-motor.zero_position()  # Bug: Motor might move
-
-# v5.0: Safe zeroing with position command reset
-motor.zero_position()  # Safe: Motor stays in place
-```
-
-#### ✅ Added Emergency Stop
-```python
-motor.stop()  # New method: Immediately set torque to 0
-```
+- `set_position()`, `set_velocity()`, `set_torque()`에서 `duration` 파라미터 제거 (Non-blocking 설계)
+- `stepTimeout`, `stepTolerance`, `stepSettlingTime` 등 미사용 변수 제거
+- `zero_position()` 호출 시 의도치 않은 모터 움직임 버그 수정
+- `stop()` 긴급 정지 메서드 추가
+- Soft Limit 기능 추가 (`set_soft_limit()`, `set_position_smooth()`)
 
 ---
 
-## 🌟 Key Features
-
-- **Non-Blocking Control**: All commands return immediately for real-time applications
-- **4 Control Modes**: Position, Velocity, Torque, and Impedance control
-- **Context Manager**: Automatic power management with `with` statement
-- **Type Hints**: Full type annotations for better IDE support
-- **Detailed Logging**: Comprehensive operation logs
-- **Auto CAN Setup**: Automatic CAN interface initialization (optional)
-- **Emergency Stop**: Safe motor stop with `stop()` method
-- **Safe Zeroing**: zero_position() prevents unwanted movement
-
----
-
-## 📋 Table of Contents
-
-- [What's New in v5.0](#-whats-new-in-v50)
-- [Installation](#-installation)
-- [Quick Start](#-quick-start)
-- [Control Modes](#-control-modes)
-- [Non-Blocking Design](#-non-blocking-design)
-- [Advanced Features](#-advanced-features)
-- [Configuration](#-configuration)
-- [API Reference](#-api-reference)
-- [Examples](#-examples)
-- [Migration from v4.3](#-migration-from-v43)
-- [Troubleshooting](#-troubleshooting)
-
----
-
-## 🚀 Installation
+## Installation
 
 ### Prerequisites
 
 ```bash
-# Install TMotorCANControl library
 pip install TMotorCANControl
-
-# Install CAN utilities (Linux)
-sudo apt-get install can-utils
+sudo apt-get install can-utils  # Linux
 ```
 
-### Setup Sudo Permissions (Recommended)
+### Sudo 권한 설정 (권장)
 
-To allow automatic CAN interface setup without password prompts:
+CAN 인터페이스 자동 설정을 위해:
 
 ```bash
 sudo visudo
-# Add this line:
+# 아래 줄 추가:
 your_username ALL=(ALL) NOPASSWD: /sbin/ip
 ```
 
-### Install TMotorAPI
+### TMotorAPI 설치
 
 ```bash
-# Clone the repository
 git clone https://github.com/KR70004526/TMotorAPI.git
 cd TMotorAPI
-
-# Copy to your project
 cp src/TMotorAPI.py your_project/
-
-# Or install using pip (editable mode)
-python3 -m pip install -e . --break-system-packages
-# Editable mode: Changes to code take effect immediately
 ```
 
 ---
 
-## ⚡ Quick Start
-
-### Basic Non-Blocking Control
+## Quick Start
 
 ```python
 from TMotorAPI import Motor
 import time
 import signal
 
-# Signal handler for clean exit
 running = True
-signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
+signal.signal(signal.SIGINT, lambda s, f: globals().update(running=False))
 
-# Create and use motor with context manager
-with Motor('AK80-64', motorId=2, autoInit=True) as motor:
-    print("Motor enabled!")
-    
-    # Non-blocking control loop
+with Motor('AK70-10', motorId=1, autoInit=True) as motor:
     while running:
-        # Set control command
-        motor.set_position(1.57)  # Target position
-        
-        # Send command and receive state
-        motor.update()
-        
-        # Print current state
-        print(f"Position: {motor.position:.3f} rad, "
-              f"Velocity: {motor.velocity:.3f} rad/s, "
-              f"Torque: {motor.torque:.3f} Nm")
-        
-        # Control loop timing (100 Hz)
-        time.sleep(0.01)
-    
-print("Motor disabled!")
-```
-
-### Understanding Power Management
-
-**Important**: Motor power operates in 2 stages:
-
-#### 1. Object Creation (Connection, Power OFF)
-```python
-motor = Motor('AK80-64', motorId=2, autoInit=True)
-# ✅ TMotorManager object created
-# ✅ CAN connection established
-# ⚠️ Motor power is still OFF (motor won't move yet)
-```
-
-#### 2. Enable/With Block (Power ON)
-```python
-with motor:  # __enter__() → enable() → Power ON
-    # ✅ Motor is now powered and ready to move
-    motor.set_position(1.57)
-    motor.update()  # Actually sends command
-    # Power remains on throughout the with block
-# __exit__() → disable() → Power OFF
-```
-
-### Manual Power Control
-
-```python
-motor = Motor('AK80-64', motorId=2, autoInit=True)
-
-motor.enable()  # Power ON
-print(f"Power: {motor.is_power_on()}")  # True
-
-while running:
-    motor.set_position(1.57)
-    motor.update()
-    time.sleep(0.01)
-
-motor.disable()  # Power OFF
-print(f"Power: {motor.is_power_on()}")  # False
-```
-
----
-
-## 🎯 Control Modes
-
-### Overview
-
-| Mode | Function | Use Case |
-|------|----------|----------|
-| **Position** | `set_position()` | Position tracking with PD control |
-| **Velocity** | `set_velocity()` | Speed control |
-| **Torque** | `set_torque()` | Force control, gravity compensation |
-
-**All modes are non-blocking in v5.0!**
-
----
-
-### 1. Position Control
-
-Position tracking with PD gains and optional feedforward torque.
-
-```python
-motor.set_position(
-    targetPos=1.57,      # Target position (rad)
-    kp=10.0,             # Position gain (Nm/rad), optional
-    kd=2.0,              # Velocity gain (Nm/(rad/s)), optional
-    feedTor=0.0          # Feedforward torque (Nm), optional
-)
-```
-
-**Parameters:**
-- `targetPos`: Desired position in radians
-- `kp`: Position gain (uses `defaultKp` if None)
-- `kd`: Velocity gain (uses `defaultKd` if None)
-- `feedTor`: Feedforward torque for gravity/load compensation
-
-**Usage Pattern:**
-```python
-while running:
-    motor.set_position(target_angle, kp=10, kd=2)
-    motor.update()
-    time.sleep(0.01)  # 100 Hz control loop
-```
-
-**When to use:**
-- Position tracking with custom control loop
-- Real-time position updates based on sensor data
-- Integrating with external trajectory planners
-
----
-
-### 2. Velocity Control
-
-Direct velocity command with damping gain.
-
-```python
-motor.set_velocity(
-    targetVel=3.0,      # Target velocity (rad/s)
-    kd=5.0              # Velocity gain (Nm/(rad/s)), optional
-)
-```
-
-**Parameters:**
-- `targetVel`: Desired velocity in rad/s
-- `kd`: Velocity gain (uses `defaultKd` if None)
-
-**Usage Pattern:**
-```python
-while running:
-    motor.set_velocity(target_speed, kd=5)
-    motor.update()
-    time.sleep(0.01)
-```
-
-**When to use:**
-- Continuous rotation applications
-- Speed-based control
-- Wheel/joint velocity control
-
----
-
-### 3. Torque Control
-
-Direct torque/force control.
-
-```python
-motor.set_torque(
-    targetTor=2.5       # Desired torque (Nm)
-)
-```
-
-**Parameters:**
-- `targetTor`: Desired torque in Nm
-
-**Usage Pattern:**
-```python
-while running:
-    torque = calculate_torque()  # Your control algorithm
-    motor.set_torque(torque)
-    motor.update()
-    time.sleep(0.01)
-```
-
-**When to use:**
-- Force control applications
-- Gravity compensation
-- Impedance control
-- Haptic feedback
-- Compliant manipulation
-
----
-
-## 🔄 Non-Blocking Design
-
-### Core Concept
-
-**v5.0 uses a non-blocking design where the user controls the timing:**
-
-```python
-# The Control Loop Pattern
-while running:
-    # 1. Calculate/update command
-    target = calculate_target()
-    
-    # 2. Set command (non-blocking, returns immediately)
-    motor.set_position(target)
-    
-    # 3. Send command & receive state (CAN communication)
-    motor.update()
-    
-    # 4. Use current state for next iteration
-    current_pos = motor.position
-    current_vel = motor.velocity
-    
-    # 5. Control loop timing
-    time.sleep(0.01)  # 100 Hz
-```
-
-### Key Differences from v4.3
-
-| Aspect | v4.3 (Blocking) | v5.0 (Non-blocking) |
-|--------|-----------------|---------------------|
-| **Command** | Blocks until complete | Returns immediately |
-| **Duration** | `duration=2.0` | No duration parameter |
-| **Timing** | Handled by library | User controls timing |
-| **Flexibility** | Limited | High flexibility |
-| **Real-time** | Difficult | Easy |
-
-### Advantages of Non-Blocking Design
-
-#### 1. Real-Time Control
-```python
-# React to sensor data immediately
-while running:
-    sensor_data = read_sensor()
-    
-    if sensor_data > threshold:
-        motor.set_torque(0)  # Immediate response
-    else:
-        motor.set_torque(5.0)
-    
-    motor.update()
-    time.sleep(0.001)  # 1000 Hz possible
-```
-
-#### 2. Multi-Motor Coordination
-```python
-# Control multiple motors synchronously
-with Motor('AK80-64', motorId=1) as motor1, \
-     Motor('AK80-64', motorId=2) as motor2:
-    
-    while running:
-        # Set commands for both motors
-        motor1.set_position(angle1)
-        motor2.set_position(angle2)
-        
-        # Update both at the same time
-        motor1.update()
-        motor2.update()
-        
+        motor.set_position(1.57)
+        state = motor.update()
+        print(f"Position: {state['position']:.3f} rad, "
+              f"Velocity: {state['velocity']:.3f} rad/s, "
+              f"Torque: {state['torque']:.3f} Nm, "
+              f"Temperature: {state['temperature']:.1f} °C")
         time.sleep(0.01)
 ```
 
-#### 3. Custom Control Algorithms
-```python
-# Implement your own settling logic
-def wait_until_settled(motor, target, tolerance=0.05, timeout=5.0):
-    start_time = time.time()
-    
-    while time.time() - start_time < timeout:
-        motor.set_position(target)
-        motor.update()
-        
-        if abs(motor.position - target) < tolerance:
-            return True
-        
-        time.sleep(0.01)
-    
-    return False
-
-# Use it
-if wait_until_settled(motor, 1.57):
-    print("Position reached!")
-```
-
-#### 4. Integration with External Systems
-```python
-# Integrate with ROS, game loops, etc.
-def ros_control_loop():
-    rate = rospy.Rate(100)  # 100 Hz
-    
-    while not rospy.is_shutdown():
-        # Get command from ROS
-        target = get_ros_command()
-        
-        # Send to motor
-        motor.set_position(target)
-        motor.update()
-        
-        # Publish state back to ROS
-        publish_motor_state(motor.position, motor.velocity)
-        
-        rate.sleep()
-```
-
 ---
 
-## 🔬 Advanced Features
+## Classes
 
-### Emergency Stop
+### MotorConfig
 
-Immediately set torque to zero for safety:
-
-```python
-# In emergency situations
-motor.stop()  # Sets torque to 0 and updates
-
-# Equivalent to:
-motor.set_torque(0.0)
-motor.update()
-```
-
-**Use cases:**
-- Safety stop button
-- Collision detection
-- Over-temperature protection
-- Error conditions
-
-### Zeroing Position
-
-Set current position as zero reference (safe in v5.0):
-
-```python
-motor.zero_position()
-# ✅ Current position is now 0.0 rad
-# ✅ Motor does NOT move
-# ✅ Position command is reset to 0
-# ✅ Takes ~1 second (EEPROM save)
-```
-
-**What happens:**
-1. Sends zero position command to controller
-2. Waits 1 second for EEPROM save
-3. Sets position command to 0 (prevents movement)
-4. Updates motor state
-
-**When to use:**
-- Initial calibration
-- Setting home position
-- Resetting encoder after mechanical adjustment
-
-### Gravity Compensation
-
-Compensate for gravity in position control:
-
-```python
-import numpy as np
-
-# System parameters
-mass = 2.0      # kg
-g = 9.81        # m/s²
-length = 0.3    # m
-
-def gravity_torque(angle):
-    """Calculate gravity compensation torque"""
-    return mass * g * length * np.cos(angle)
-
-# Use in control loop
-while running:
-    target_angle = 1.57  # 90 degrees
-    
-    motor.set_position(
-        targetPos=target_angle,
-        kp=10.0,
-        kd=2.0,
-        feedTor=gravity_torque(target_angle)
-    )
-    motor.update()
-    time.sleep(0.01)
-```
-
-### State Monitoring
-
-Access motor state in real-time:
-
-```python
-# Update and get all state
-state = motor.update()
-print(f"Position: {state['position']:.3f} rad")
-print(f"Velocity: {state['velocity']:.3f} rad/s")
-print(f"Torque: {state['torque']:.3f} Nm")
-print(f"Temperature: {state['temperature']:.1f} °C")
-
-# Or access properties (uses last updated values)
-pos = motor.position        # rad
-vel = motor.velocity        # rad/s
-tor = motor.torque          # Nm
-temp = motor.temperature    # °C
-
-# Check motor status
-is_on = motor.is_power_on()
-uptime = motor.get_uptime()  # Seconds since enable()
-connected = motor.check_connection()
-```
-
-### Custom Control Loops
-
-Implement advanced control algorithms:
-
-```python
-# Example: Simple settling logic
-def move_with_settling(motor, target, tolerance=0.05, 
-                       stable_count=10):
-    """
-    Move to target and wait until position is stable
-    
-    Args:
-        motor: Motor instance
-        target: Target position (rad)
-        tolerance: Position tolerance (rad)
-        stable_count: Required consecutive stable readings
-    """
-    count = 0
-    
-    while count < stable_count:
-        motor.set_position(target)
-        motor.update()
-        
-        if abs(motor.position - target) < tolerance:
-            count += 1
-        else:
-            count = 0  # Reset if position drifts
-        
-        time.sleep(0.01)
-    
-    print(f"Position stable at {motor.position:.3f} rad")
-
-# Use it
-move_with_settling(motor, 1.57, tolerance=0.03, stable_count=20)
-```
-
----
-
-## ⚙️ Configuration
-
-### MotorConfig Class
-
-Complete configuration for motor parameters:
+모터 설정을 담는 dataclass.
 
 ```python
 from TMotorAPI import MotorConfig
 
 config = MotorConfig(
-    # ==================== Motor Identification ====================
-    motorType='AK80-64',        # 'AK80-64', 'AK80-9', 'AK70-10'
-    motorId=2,                  # CAN ID (0-127)
-    
-    # ==================== CAN Setup ====================
-    canInterface='can0',        # 'can0', 'can1', etc.
-    bitrate=1000000,            # CAN bitrate (default: 1 Mbps)
-    autoInit=True,              # Auto setup CAN interface
-    
-    # ==================== Safety ====================
-    maxTemperature=50.0,        # Max MOSFET temperature (°C)
-    
-    # ==================== Default Control Gains ====================
-    defaultKp=10.0,             # Position gain (Nm/rad)
-    defaultKd=0.5,              # Velocity gain (Nm/(rad/s))
+    motorType='AK70-10',       # 모터 모델 (기본값: 'AK70-10')
+    motorId=1,                 # CAN ID, 0-127 (기본값: 1)
+    canInterface='can0',       # CAN 인터페이스 이름 (기본값: 'can0')
+    bitrate=1000000,           # CAN bitrate (기본값: 1000000)
+    autoInit=True,             # CAN 인터페이스 자동 초기화 (기본값: True)
+    maxTemperature=50.0,       # 최대 MOSFET 온도, °C (기본값: 50.0)
+    defaultKp=10.0,            # 기본 위치 게인, Nm/rad (기본값: 10.0)
+    defaultKd=0.5,             # 기본 속도 게인, Nm/(rad/s) (기본값: 0.5)
+    canBackend='socketcan',    # CAN 백엔드: 'socketcan', 'socketcan_native', 'gs_usb' (기본값: 'socketcan')
+    canChannel='can0',         # socketcan → 'can0' 등 문자열 | gs_usb → 0 등 정수 (기본값: 'can0')
 )
-
-motor = Motor(config=config)
 ```
 
-### Parameter Details
-
-#### Motor Identification
-- **motorType**: Motor model string
-  - Must match physical motor
-  - Examples: `'AK80-64'`, `'AK80-9'`, `'AK70-10'`
-- **motorId**: CAN ID (0-127)
-  - Configured on the motor hardware
-  - Must be unique on the CAN bus
-
-#### CAN Setup
-- **canInterface**: Linux CAN interface name
-  - Only used by `CANInterface.setup_interface()`
-  - Common: `'can0'`, `'can1'`
-- **bitrate**: CAN bus speed
-  - Default: 1000000 (1 Mbps) for T-Motors
-  - Must match all devices on bus
-- **autoInit**: Automatic CAN interface setup
-  - `True`: Runs setup automatically
-  - `False`: Manual setup required
-
-**Note**: `TMotorManager_mit_can` automatically detects CAN interface after setup.
-
-#### Safety
-- **maxTemperature**: Temperature warning threshold (°C)
-  - Logs warning when exceeded
-  - Does NOT automatically stop motor
-  - User should monitor and take action
-
-#### Default Control Gains
-- **defaultKp**: Default position gain (Nm/rad)
-  - Used when `kp=None` in `set_position()`
-  - Higher = stiffer position control
-  - Typical: 5.0 - 20.0
-- **defaultKd**: Default velocity gain (Nm/(rad/s))
-  - Used when `kd=None` in `set_position()` and `set_velocity()`
-  - Higher = more damping
-  - Typical: 0.5 - 5.0
-
-### Three Ways to Create Motor
-
-```python
-# Method 1: Direct parameters (simple)
-motor = Motor('AK80-64', motorId=2, autoInit=True)
-
-# Method 2: Config object (recommended for complex setups)
-config = MotorConfig(
-    motorType='AK80-64',
-    motorId=2,
-    maxTemperature=60.0,
-    defaultKp=15.0,
-    defaultKd=2.0
-)
-motor = Motor(config=config)
-
-# Method 3: Mix both (parameters override config)
-config = MotorConfig(motorType='AK80-64', motorId=2)
-motor = Motor(config=config, maxTemperature=70.0)  # Override
-```
+**Validation (`__post_init__`)**:
+- `motorId`는 0~127 범위여야 함
+- `canBackend`가 `socketcan` 또는 `socketcan_native`이면 `canChannel`은 `'can0'` 형식의 문자열이어야 함
+- `canBackend`가 `gs_usb`이면 `canChannel`은 정수여야 함
+- 지원하지 않는 `canBackend`는 `ValueError` 발생
 
 ---
 
-## 📚 API Reference
+### CANInterface
 
-### Motor Class
-
-#### Constructor
-
-```python
-Motor(
-    motorType: Optional[str] = None,
-    motorId: Optional[int] = None,
-    canInterface: Optional[str] = None,
-    bitrate: Optional[int] = None,
-    autoInit: Optional[bool] = None,
-    maxTemperature: Optional[float] = None,
-    config: Optional[MotorConfig] = None,
-    **kwargs
-)
-```
-
-#### Control Methods
-
-All methods are **non-blocking** and return immediately.
-
-| Method | Parameters | Description |
-|--------|-----------|-------------|
-| `set_position()` | `targetPos, kp=None, kd=None, feedTor=0.0` | Set position command |
-| `set_velocity()` | `targetVel, kd=None` | Set velocity command |
-| `set_torque()` | `targetTor` | Set torque command |
-| `stop()` | - | Emergency stop (torque = 0) |
-| `zero_position()` | - | Set current position as zero |
-
-#### State Methods
-
-```python
-# Send command and receive state (CAN communication)
-state = motor.update()
-# Returns: {'position': float, 'velocity': float, 
-#           'torque': float, 'temperature': float}
-
-# Access cached state (no CAN communication)
-pos = motor.position        # rad
-vel = motor.velocity        # rad/s
-tor = motor.torque          # Nm
-temp = motor.temperature    # °C
-
-# Status checks
-motor.is_power_on()         # True/False
-motor.get_uptime()          # Seconds since enable()
-motor.check_connection()    # Test CAN communication
-```
-
-#### Power Management
-
-```python
-motor.enable()   # Power ON (required before commands)
-motor.disable()  # Power OFF
-
-# Context manager (automatic power management)
-with motor:
-    # Motor powered on
-    motor.set_position(1.57)
-    motor.update()
-# Motor powered off
-```
-
----
-
-### CANInterface Class
-
-Manual CAN interface setup (optional, automatic with `autoInit=True`):
+CAN 인터페이스를 시스템 명령으로 설정하는 정적 클래스.
 
 ```python
 from TMotorAPI import CANInterface
 
-# Setup CAN interface
-CANInterface.setup_interface(
-    canInterface='can0',
-    bitrate=1000000
-)
-
-# Or use config
-CANInterface.setup_interface(config=motor_config)
+CANInterface.setup_interface(canInterface='can0', bitrate=1000000)
+# 또는
+CANInterface.setup_interface(config=config)
 ```
+
+**동작 방식**:
+- Linux에서 `sudo ip link set` 명령을 통해 CAN 인터페이스를 down → bitrate 설정 → up 순서로 실행
+- Windows(`os.name == "nt"`)에서는 CAN bring-up을 건너뛰고 `True` 반환
+- `canInterface` 이름이 `can\d+` 패턴이 아닌 경우에도 건너뛰고 `True` 반환
+- 실패 시 `False` 반환
 
 ---
 
-### TrajectoryGenerator Class (Utility)
+### TrajectoryGenerator
 
-Low-level trajectory planning utilities (for custom implementations):
+궤적 생성 유틸리티 클래스. 모든 메서드는 `@staticmethod`이며 `(position, velocity)` 튜플을 반환한다.
 
 ```python
 from TMotorAPI import TrajectoryGenerator
-
-# Minimum jerk trajectory (5th order)
-pos, vel = TrajectoryGenerator.minimum_jerk(
-    startPos=0.0,
-    endPos=1.57,
-    currentTime=0.5,
-    totalDuration=2.0
-)
-
-# Cubic trajectory (3rd order)
-pos, vel = TrajectoryGenerator.cubic(
-    startPos=0.0,
-    endPos=1.57,
-    currentTime=0.5,
-    totalDuration=2.0
-)
-
-# Linear interpolation
-pos, vel = TrajectoryGenerator.linear(
-    startPos=0.0,
-    endPos=1.57,
-    currentTime=0.5,
-    totalDuration=2.0
-)
 ```
 
-**Note**: These are utilities for implementing custom trajectory following in your control loop.
+**`minimum_jerk(startPos, endPos, currentTime, totalDuration)`**  
+5차 다항식 기반 최소 저크 궤적. `currentTime >= totalDuration`이면 `(endPos, 0.0)` 반환.
+
+```python
+pos, vel = TrajectoryGenerator.minimum_jerk(0.0, 1.57, 0.5, 2.0)
+```
+
+**`cubic(startPos, endPos, currentTime, totalDuration)`**  
+3차 다항식 궤적. `currentTime >= totalDuration`이면 `(endPos, 0.0)` 반환.
+
+```python
+pos, vel = TrajectoryGenerator.cubic(0.0, 1.57, 0.5, 2.0)
+```
+
+**`linear(startPos, endPos, currentTime, totalDuration)`**  
+선형 보간. `currentTime >= totalDuration`이면 `(endPos, 0.0)` 반환.
+
+```python
+pos, vel = TrajectoryGenerator.linear(0.0, 1.57, 0.5, 2.0)
+```
 
 ---
 
-## 💡 Examples
+### Motor
 
-### Example 1: Simple Position Control
+고수준 모터 제어 API. Non-blocking 설계.
+
+#### 생성 방법
 
 ```python
-from TMotorAPI import Motor
-import time
-import signal
+# 방법 1: 직접 파라미터
+motor = Motor('AK70-10', motorId=1, autoInit=True)
 
-running = True
-signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
+# 방법 2: MotorConfig 객체
+config = MotorConfig(motorType='AK70-10', motorId=1)
+motor = Motor(config=config)
 
-with Motor('AK80-64', motorId=1, autoInit=True) as motor:
-    print("Moving to 90 degrees...")
-    
-    target = 1.57  # π/2 rad
-    
-    while running:
-        motor.set_position(target, kp=10, kd=2)
-        motor.update()
-        
-        print(f"Position: {motor.position:.3f} rad, "
-              f"Error: {abs(motor.position - target):.4f} rad")
-        
-        time.sleep(0.01)  # 100 Hz
+# 방법 3: 혼합 (kwargs도 가능)
+motor = Motor(motorType='AK70-10', motorId=1, maxTemperature=60.0)
 ```
 
-### Example 2: Gravity Compensation
+생성 시 `autoInit=True`이면 `CANInterface.setup_interface()`가 자동 호출된다.  
+내부적으로 `TMotorManager_mit_can`을 생성하며, `canBackend`와 `canChannel`을 전달한다.
+
+#### Context Manager
 
 ```python
-from TMotorAPI import Motor, MotorConfig
-import numpy as np
-import time
-import signal
+with Motor('AK70-10', motorId=1) as motor:
+    # __enter__() → enable() 호출 (Power ON)
+    motor.set_position(1.57)
+    motor.update()
+# __exit__() → disable() 호출 (Power OFF)
+```
 
-# System parameters
-mass = 2.0      # kg
-g = 9.81        # m/s²
-length = 0.3    # m (center of mass distance)
+#### Properties (읽기 전용)
+
+마지막 `update()` 호출 시 갱신된 캐시 값을 반환한다.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `position` | `float` | 현재 위치 (rad) |
+| `velocity` | `float` | 현재 속도 (rad/s) |
+| `torque` | `float` | 현재 토크 (Nm) |
+| `temperature` | `float` | 현재 MOSFET 온도 (°C) |
+
+#### Power Control
+
+**`enable()`** — 모터 Power ON. `__enter__`에서 호출된다. 이미 활성화 상태면 경고 로그만 출력. 활성화 후 0.1초 대기 후 `update()` 1회 실행.
+
+**`disable()`** — 모터 Power OFF. `__exit__`에서 호출된다. 가동 시간(uptime)을 로그에 기록.
+
+**`is_power_on()`** — `bool` 반환. 모터 활성화 여부.
+
+**`get_uptime()`** — `float` 반환. `enable()` 이후 경과 시간(초). 비활성화 상태면 `0.0`.
+
+#### State Update
+
+**`update()`** — CAN 통신으로 명령 전송 및 상태 수신. `Dict[str, float]` 반환:
+
+```python
+state = motor.update()
+# {'position': float, 'velocity': float, 'torque': float, 'temperature': float}
+```
+
+모터가 활성화되지 않았으면 `RuntimeError` 발생.
+
+#### Control Commands
+
+모든 제어 명령은 **non-blocking**이며, `update()`를 호출해야 실제 CAN 통신이 수행된다.  
+모터가 활성화되지 않았으면 `RuntimeError` 발생.
+
+**`set_position(targetPos, kp=None, kd=None, feedTor=0.0)`**  
+위치 제어 명령. 내부적으로 `set_impedance_gains_real_unit_full_state_feedback(K=kp, B=kd)`를 호출한다.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `targetPos` | `float` | (필수) | 목표 위치 (rad) |
+| `kp` | `float` or `None` | `config.defaultKp` | 위치 게인 (Nm/rad) |
+| `kd` | `float` or `None` | `config.defaultKd` | 속도 게인 (Nm/(rad/s)) |
+| `feedTor` | `float` | `0.0` | 피드포워드 토크 (Nm) |
+
+**`set_velocity(targetVel, kd=None)`**  
+속도 제어 명령. 내부적으로 `set_speed_gains(kd=kd)`를 호출한다.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `targetVel` | `float` | (필수) | 목표 속도 (rad/s) |
+| `kd` | `float` or `None` | `config.defaultKd` | 속도 게인 |
+
+**`set_torque(targetTor)`**  
+토크 제어 명령. 내부적으로 `set_current_gains()`를 호출한다.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `targetTor` | `float` | 목표 토크 (Nm) |
+
+**`stop()`**  
+긴급 정지. `set_current_gains()` 호출 후 토크를 0으로 설정하고 `update()`까지 수행한다. 모터가 비활성화 상태면 아무 동작도 하지 않는다.
+
+#### Soft Limit
+
+소프트 리밋은 위치 한계 근처에서 댐핑(kd)을 자동으로 증가시켜 부드럽게 감속하는 기능이다.
+
+**`set_soft_limit(min_pos, max_pos, soft_zone=0.2, base_kd=2.0, max_kd=20.0)`**  
+소프트 리밋 범위를 설정한다.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `min_pos` | `float` | (필수) | 최소 위치 한계 (rad) |
+| `max_pos` | `float` | (필수) | 최대 위치 한계 (rad) |
+| `soft_zone` | `float` | `0.2` | 댐핑 증가 구간 (rad) |
+| `base_kd` | `float` | `2.0` | 일반 구간 기본 댐핑 |
+| `max_kd` | `float` | `20.0` | 한계 지점 최대 댐핑 |
+
+**`set_position_smooth(targetPos, kp=None, feedTor=0.0, min_pos=None, max_pos=None, soft_zone=None, base_kd=None, max_kd=None)`**  
+소프트 리밋을 적용한 위치 제어 명령.
+
+동작 방식:
+1. 목표 위치를 `[min_pos, max_pos]` 범위로 클램핑
+2. 현재 위치가 `max_pos - soft_zone` 이상이면 상한 접근 → kd 증가
+3. 현재 위치가 `min_pos + soft_zone` 이하이면 하한 접근 → kd 증가
+4. 조정된 kd로 `set_position()` 호출
+
+소프트 리밋이 설정되지 않은 상태에서 `min_pos`/`max_pos`를 명시하지 않으면 `ValueError` 발생.
+
+사용 방법:
+
+```python
+# 방법 1: 미리 설정
+motor.set_soft_limit(-1.57, 1.57)
+while running:
+    motor.set_position_smooth(target)
+    motor.update()
+    time.sleep(0.01)
+
+# 방법 2: 호출 시마다 지정
+while running:
+    motor.set_position_smooth(target, min_pos=-1.57, max_pos=1.57)
+    motor.update()
+    time.sleep(0.01)
+```
+
+#### Utility
+
+**`zero_position()`**  
+현재 위치를 0으로 재설정 (엔코더 리셋). 모터가 움직이지 않으며, EEPROM 저장을 위해 약 1초 대기한다. 리셋 후 위치 명령을 0으로 설정하여 의도치 않은 움직임을 방지한다.
+
+```python
+motor.zero_position()
+# 현재 위치가 0.0 rad로 재정의됨
+```
+
+**`check_connection()`**  
+`update()`를 시도하여 모터 응답 여부를 `bool`로 반환. 비활성화 상태면 `False`.
+
+---
+
+## Non-Blocking Design Pattern
+
+v5.0의 모든 제어 명령은 즉시 반환되며, 사용자가 `update()` 호출로 CAN 통신 타이밍을 직접 제어한다.
+
+```python
+while running:
+    # 1. 명령 설정 (non-blocking)
+    motor.set_position(target)
+    
+    # 2. CAN 통신 (명령 전송 + 상태 수신)
+    motor.update()
+    
+    # 3. 상태 확인
+    pos = motor.position
+    vel = motor.velocity
+    
+    # 4. 루프 주기 제어
+    time.sleep(0.01)  # 100 Hz
+```
+
+---
+
+## Examples
+
+### Position Control with Feedforward Torque
+
+```python
+import numpy as np
+
+mass, g, length = 2.0, 9.81, 0.3
 
 def gravity_torque(angle):
-    """Calculate gravity compensation torque"""
     return mass * g * length * np.cos(angle)
 
-# Configure motor
-config = MotorConfig(
-    motorType='AK80-64',
-    motorId=1,
-    defaultKp=15.0,
-    defaultKd=2.0
-)
-
-running = True
-signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
-
-with Motor(config=config) as motor:
-    # Zero at horizontal position
-    print("Zeroing position...")
-    motor.zero_position()
-    
-    # Move to various angles with gravity compensation
-    angles = [0.0, 0.5, 1.0, 1.57, 2.0]  # radians
-    
-    for target_angle in angles:
-        print(f"\nMoving to {np.degrees(target_angle):.1f}°...")
-        
-        # Move for 2 seconds
-        start_time = time.time()
-        while time.time() - start_time < 2.0 and running:
-            motor.set_position(
-                targetPos=target_angle,
-                kp=15.0,
-                kd=2.0,
-                feedTor=gravity_torque(target_angle)
-            )
-            motor.update()
-            
-            print(f"  Pos: {motor.position:.3f} rad, "
-                  f"Torque: {motor.torque:.2f} Nm, "
-                  f"Temp: {motor.temperature:.1f}°C")
-            
-            time.sleep(0.01)
-        
-        if not running:
-            break
-    
-    print("\nDone!")
+with Motor('AK70-10', motorId=1) as motor:
+    target = 1.57
+    while running:
+        motor.set_position(target, kp=15.0, kd=2.0,
+                           feedTor=gravity_torque(target))
+        motor.update()
+        time.sleep(0.01)
 ```
 
-### Example 3: Velocity Sweep
+### Velocity Control
 
 ```python
-from TMotorAPI import Motor
-import time
-import signal
-
-running = True
-signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
-
-with Motor('AK80-9', motorId=2, autoInit=True) as motor:
-    velocities = [1.0, 2.0, 3.0, 2.0, 1.0, 0.0]  # rad/s
-    
-    for target_vel in velocities:
-        print(f"\nSetting velocity: {target_vel} rad/s")
-        
-        # Hold velocity for 2 seconds
-        start_time = time.time()
-        while time.time() - start_time < 2.0 and running:
-            motor.set_velocity(target_vel, kd=5.0)
-            motor.update()
-            
-            print(f"  Vel: {motor.velocity:.3f} rad/s, "
-                  f"Pos: {motor.position:.3f} rad")
-            
-            time.sleep(0.01)
-        
-        if not running:
-            break
-    
-    # Stop
-    motor.set_velocity(0.0)
-    motor.update()
+with Motor('AK70-10', motorId=1) as motor:
+    while running:
+        motor.set_velocity(3.0, kd=5.0)
+        motor.update()
+        time.sleep(0.01)
 ```
 
-### Example 4: Torque Control with Safety Monitoring
+### Torque Control with Temperature Monitoring
 
 ```python
-from TMotorAPI import Motor, MotorConfig
-import time
-import signal
-
-# Configure with lower temperature threshold
-config = MotorConfig(
-    motorType='AK70-10',
-    motorId=1,
-    maxTemperature=45.0
-)
-
-running = True
-signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
-
-with Motor(config=config) as motor:
-    target_torque = 2.0  # Nm
-    duration = 5.0       # seconds
-    
-    print(f"Applying {target_torque} Nm for {duration}s...")
-    
-    start_time = time.time()
-    
-    while time.time() - start_time < duration and running:
-        # Apply torque
-        motor.set_torque(target_torque)
+with Motor('AK70-10', motorId=1, maxTemperature=45.0) as motor:
+    while running:
+        motor.set_torque(2.5)
         motor.update()
         
-        # Monitor state
-        print(f"Pos: {motor.position:.3f} rad, "
-              f"Vel: {motor.velocity:.3f} rad/s, "
-              f"Torque: {motor.torque:.3f} Nm, "
-              f"Temp: {motor.temperature:.1f}°C")
-        
-        # Safety check
-        if motor.temperature > config.maxTemperature:
-            print("⚠ Temperature too high! Stopping...")
+        if motor.temperature > 45.0:
             motor.stop()
             break
         
-        time.sleep(0.1)
-    
-    # Stop torque
-    motor.stop()
-    print("Torque stopped")
-```
-
-### Example 5: Custom Settling Logic
-
-```python
-from TMotorAPI import Motor
-import time
-import signal
-
-def move_and_settle(motor, target, tolerance=0.05, stable_cycles=10):
-    """
-    Move to target and wait until position is stable
-    
-    Args:
-        motor: Motor instance
-        target: Target position (rad)
-        tolerance: Position tolerance (rad)
-        stable_cycles: Required consecutive stable readings
-    
-    Returns:
-        True if settled, False if interrupted
-    """
-    count = 0
-    running = True
-    
-    def stop_handler(s, f):
-        nonlocal running
-        running = False
-    
-    signal.signal(signal.SIGINT, stop_handler)
-    
-    print(f"Moving to {target:.3f} rad...")
-    
-    while count < stable_cycles and running:
-        motor.set_position(target, kp=10, kd=2)
-        motor.update()
-        
-        error = abs(motor.position - target)
-        
-        if error < tolerance:
-            count += 1
-            print(f"  Settling: {count}/{stable_cycles} "
-                  f"(error: {error:.4f} rad)")
-        else:
-            if count > 0:
-                print(f"  Drift detected! Resetting counter "
-                      f"({count}→0)")
-            count = 0
-        
         time.sleep(0.01)
-    
-    if running:
-        print(f"✓ Position stable at {motor.position:.3f} rad")
-        return True
-    else:
-        print("✗ Interrupted")
-        return False
-
-# Use it
-with Motor('AK80-64', motorId=1, autoInit=True) as motor:
-    if move_and_settle(motor, 1.57, tolerance=0.03, stable_cycles=20):
-        print("Ready for next operation")
 ```
 
-### Example 6: Multi-Motor Synchronization
+### Soft Limit Position Control
 
 ```python
-from TMotorAPI import Motor
-import time
-import signal
-
-running = True
-signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
-
-# Create two motors
-with Motor('AK80-64', motorId=1, canInterface='can0') as motor1, \
-     Motor('AK80-64', motorId=2, canInterface='can0') as motor2:
-    
-    print("Synchronizing two motors...")
-    
-    # Synchronous sine wave motion
-    import numpy as np
-    
-    t = 0.0
-    dt = 0.01  # 100 Hz
+with Motor('AK70-10', motorId=1) as motor:
+    motor.set_soft_limit(-1.57, 1.57, soft_zone=0.2, base_kd=2.0, max_kd=20.0)
     
     while running:
-        # Calculate synchronized positions
-        angle1 = np.sin(2 * np.pi * 0.5 * t)  # 0.5 Hz sine
-        angle2 = np.cos(2 * np.pi * 0.5 * t)  # 0.5 Hz cosine
-        
-        # Set commands for both motors
-        motor1.set_position(angle1, kp=10, kd=2)
-        motor2.set_position(angle2, kp=10, kd=2)
-        
-        # Update both motors
-        motor1.update()
-        motor2.update()
-        
-        print(f"Motor1: {motor1.position:.3f} rad, "
-              f"Motor2: {motor2.position:.3f} rad")
-        
-        time.sleep(dt)
-        t += dt
-    
-    print("Stopped")
+        motor.set_position_smooth(target)
+        motor.update()
+        time.sleep(0.01)
 ```
 
-### Example 7: Implementing Custom Trajectory
+### Trajectory Following
 
 ```python
 from TMotorAPI import Motor, TrajectoryGenerator
 import time
-import signal
 
-running = True
-signal.signal(signal.SIGINT, lambda s,f: globals().update(running=False))
-
-with Motor('AK80-64', motorId=1, autoInit=True) as motor:
-    # Trajectory parameters
-    start_pos = 0.0
-    end_pos = 1.57
-    duration = 2.0
-    
-    print(f"Following trajectory: {start_pos} → {end_pos} rad "
-          f"in {duration}s")
-    
-    # Execute trajectory
+with Motor('AK70-10', motorId=1) as motor:
+    start_pos, end_pos, duration = 0.0, 1.57, 2.0
     start_time = time.time()
     
-    while running:
+    while True:
         t = time.time() - start_time
-        
         if t > duration:
             break
         
-        # Calculate trajectory point
         target_pos, target_vel = TrajectoryGenerator.minimum_jerk(
-            startPos=start_pos,
-            endPos=end_pos,
-            currentTime=t,
-            totalDuration=duration
-        )
+            start_pos, end_pos, t, duration)
         
-        # Send command
-        motor.set_position(target_pos, kp=10, kd=2)
+        motor.set_position(target_pos, kp=10.0, kd=2.0)
         motor.update()
-        
-        print(f"t={t:.2f}s: Target={target_pos:.3f}, "
-              f"Actual={motor.position:.3f}, "
-              f"Error={abs(motor.position - target_pos):.4f}")
-        
         time.sleep(0.01)
+```
+
+### Multi-Motor Synchronization
+
+```python
+with Motor('AK70-10', motorId=1, canInterface='can0') as motor1, \
+     Motor('AK70-10', motorId=2, canInterface='can0') as motor2:
     
-    print(f"✓ Trajectory complete!")
-    print(f"Final position: {motor.position:.3f} rad")
+    while running:
+        motor1.set_position(angle1)
+        motor2.set_position(angle2)
+        motor1.update()
+        motor2.update()
+        time.sleep(0.01)
 ```
 
----
+### Zeroing and Emergency Stop
 
-## 🔄 Migration from v4.3
-
-### Key Changes
-
-| Feature | v4.3 | v5.0 |
-|---------|------|------|
-| **Control** | Blocking | Non-blocking |
-| **Duration** | `duration=2.0` | Removed |
-| **Settling** | Automatic | User implements |
-| **Timing** | Library controlled | User controlled |
-| **update()** | Called internally | User calls explicitly |
-
-### Migration Steps
-
-#### 1. Remove Duration Parameters
-
-**Before (v4.3):**
 ```python
-motor.set_position(1.57, duration=2.0)  # Blocks for 2s
-motor.set_velocity(3.0, duration=1.0)   # Blocks for 1s
-motor.set_torque(5.0, duration=0.5)     # Blocks for 0.5s
-```
-
-**After (v5.0):**
-```python
-# Implement your own control loop
-while running:
-    motor.set_position(1.57)
-    motor.update()
-    time.sleep(0.01)  # You control timing
-```
-
-#### 2. Add Control Loop
-
-**Before (v4.3):**
-```python
-with motor:
-    motor.set_position(1.57, duration=2.0)
-    motor.set_position(0.0, duration=2.0)
-    # Motor automatically handles timing
-```
-
-**After (v5.0):**
-```python
-with motor:
-    # Move to 1.57
-    for _ in range(200):  # 2 seconds at 100 Hz
+with Motor('AK70-10', motorId=1) as motor:
+    # 현재 위치를 0으로 설정
+    motor.zero_position()
+    
+    while running:
         motor.set_position(1.57)
         motor.update()
-        time.sleep(0.01)
-    
-    # Move to 0.0
-    for _ in range(200):
-        motor.set_position(0.0)
-        motor.update()
-        time.sleep(0.01)
-```
-
-#### 3. Implement Custom Settling (if needed)
-
-**Before (v4.3):**
-```python
-# Automatic settling
-motor.set_position(1.57, duration=0.0)  # Waits until settled
-```
-
-**After (v5.0):**
-```python
-# Implement your own settling
-def wait_settled(motor, target, tolerance=0.05, cycles=10):
-    count = 0
-    while count < cycles:
-        motor.set_position(target)
-        motor.update()
         
-        if abs(motor.position - target) < tolerance:
-            count += 1
-        else:
-            count = 0
+        # 긴급 상황 시
+        if emergency:
+            motor.stop()
+            break
         
         time.sleep(0.01)
-
-wait_settled(motor, 1.57)
-```
-
-#### 4. Remove Settling Config
-
-**Before (v4.3):**
-```python
-config = MotorConfig(
-    motorType='AK80-64',
-    motorId=1,
-    stepTimeout=5.0,        # Removed in v5.0
-    stepTolerance=0.05,     # Removed in v5.0
-    stepSettlingTime=0.1    # Removed in v5.0
-)
-```
-
-**After (v5.0):**
-```python
-config = MotorConfig(
-    motorType='AK80-64',
-    motorId=1,
-    # Only these parameters remain
-    maxTemperature=50.0,
-    defaultKp=10.0,
-    defaultKd=0.5
-)
-```
-
-### Why the Change?
-
-**v4.3 Problems:**
-- ❌ Blocking calls limit flexibility
-- ❌ Hard to implement custom control
-- ❌ Difficult multi-motor coordination
-- ❌ Can't react to sensors in real-time
-
-**v5.0 Advantages:**
-- ✅ Full control over timing
-- ✅ Easy custom algorithms
-- ✅ Simple multi-motor sync
-- ✅ Real-time sensor integration
-- ✅ Cleaner code structure
-
----
-
-## 🔧 Troubleshooting
-
-### CAN Interface Not Found
-
-```bash
-# Check if interface exists
-ip link show can0
-
-# If not found on Raspberry Pi, add Device Tree Overlay
-sudo nano /boot/firmware/config.txt
-# Add: dtoverlay=mcp2515-can0,oscillator=8000000,interrupt=25
-
-# Reboot
-sudo reboot
-```
-
-### Motor Not Responding
-
-**Checklist:**
-1. ✅ Power supply (24-48V depending on model)
-2. ✅ CAN bus termination (120Ω at each end)
-3. ✅ Correct motor CAN ID
-4. ✅ Motor enabled (`enable()` or `with` statement)
-5. ✅ Calling `update()` in loop
-
-**Debug:**
-```python
-import logging
-logging.basicConfig(level=logging.DEBUG)
-
-motor = Motor('AK80-64', motorId=1, autoInit=True)
-motor.enable()
-
-# Test connection
-if motor.check_connection():
-    print("✓ Motor connected")
-else:
-    print("✗ Motor not responding")
-    print("Check power, CAN bus, and motor ID")
-```
-
-### update() Not Called
-
-**Problem:**
-```python
-# Wrong: Command set but never sent
-motor.set_position(1.57)
-# Motor won't move!
-```
-
-**Solution:**
-```python
-# Correct: Always call update() after command
-motor.set_position(1.57)
-motor.update()  # This actually sends the command
-```
-
-### Position Not Reaching Target
-
-In v5.0, there's no automatic settling. Implement your own:
-
-```python
-def wait_for_position(motor, target, tolerance=0.05, timeout=5.0):
-    start_time = time.time()
-    
-    while time.time() - start_time < timeout:
-        motor.set_position(target)
-        motor.update()
-        
-        if abs(motor.position - target) < tolerance:
-            return True
-        
-        time.sleep(0.01)
-    
-    return False
-
-# Use it
-if wait_for_position(motor, 1.57):
-    print("Position reached!")
-else:
-    print("Timeout!")
-```
-
-### Permission Denied
-
-```bash
-# Add user to dialout group
-sudo usermod -a -G dialout $USER
-
-# Setup sudo permissions for CAN
-sudo visudo
-# Add: your_username ALL=(ALL) NOPASSWD: /sbin/ip
-
-# Logout and login
-```
-
-### High Temperature Warning
-
-```python
-# Monitor temperature in control loop
-while running:
-    motor.set_torque(5.0)
-    motor.update()
-    
-    if motor.temperature > 55.0:
-        print("⚠ High temperature! Stopping...")
-        motor.stop()
-        break
-    
-    time.sleep(0.01)
-```
-
-### CAN Bus Errors
-
-```bash
-# Check CAN status
-ip -details -statistics link show can0
-
-# Look for errors (RX-ERR and TX-ERR should be 0)
-
-# Reset CAN if needed
-sudo ip link set can0 down
-sudo ip link set can0 up type can bitrate 1000000
-
-# Check wiring and termination if errors persist
-```
-
-### zero_position() Causes Movement
-
-This was a bug in v4.3, **fixed in v5.0**!
-
-```python
-# v5.0: Safe zeroing
-motor.zero_position()
-# ✓ Position command is reset to 0
-# ✓ Motor stays in place
 ```
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 User Application
        ↓
    TMotorAPI v5.0 (Non-blocking wrapper)
-       ↓ uses
-TMotorCANControl (Low-level CAN driver)
        ↓
-   SocketCAN (Linux kernel)
+   TMotorCANControl (Low-level MIT CAN driver)
        ↓
-   CAN Hardware (MCP2515, etc.)
+   SocketCAN (Linux) / gs_usb (Windows)
        ↓
-   T-Motor (AK Series)
+   CAN Hardware → T-Motor (AK Series)
 ```
 
-**Design Philosophy:**
-- **TMotorCANControl**: Direct MIT CAN protocol (low-level)
-- **TMotorAPI v5.0**: Non-blocking, real-time control (high-level)
-- **User Application**: Full control over timing and logic
+---
+
+## Dependencies
+
+- [TMotorCANControl](https://github.com/neurobionics/TMotorCANControl) (`TMotorManager_mit_can`)
+- `numpy`
+- `can-utils` (Linux, CAN 인터페이스 설정 시)
 
 ---
 
-## 📊 Performance Characteristics
+## License
 
-### Control Loop Timing
-
-**Recommended frequencies:**
-- **100 Hz (10ms)**: General purpose, good balance
-- **200 Hz (5ms)**: High performance applications
-- **500 Hz (2ms)**: Research, high-speed control
-- **1000 Hz (1ms)**: Maximum performance (requires fast CPU)
-
-**Example:**
-```python
-# 100 Hz control
-while running:
-    motor.set_position(target)
-    motor.update()
-    time.sleep(0.01)  # 10ms
-
-# 500 Hz control
-while running:
-    motor.set_torque(torque)
-    motor.update()
-    time.sleep(0.002)  # 2ms
-```
-
-### Typical Response Time
-
-| Control Mode | Response Time |
-|--------------|---------------|
-| Torque | 10-20 ms |
-| Velocity | 50-100 ms |
-| Position (PD) | 100-300 ms |
-
-*Response times depend on control gains and system dynamics*
-
----
-
-## 📝 License
-
-MIT License - See [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-This library is built on [TMotorCANControl](https://github.com/neurobionics/TMotorCANControl) by the Neurobionics Lab.
-
-**Special thanks to:**
-- [Neurobionics Lab](https://github.com/neurobionics) for TMotorCANControl
-- MIT for the open CAN protocol specification
-- T-Motor for excellent motor hardware
-
----
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/KR70004526/TMotorAPI/issues)
-- **Base Library**: [TMotorCANControl](https://github.com/neurobionics/TMotorCANControl)
-- **Documentation**: This README
-
----
-
-## 🔄 Version History
-
-### v5.0 (Current - Major Release)
-- 🚀 **Non-blocking control design**
-- ✂️ Removed `duration` parameter from all control methods
-- ✂️ Removed automatic settling time logic
-- ✂️ Removed `stepTimeout`, `stepTolerance`, `stepSettlingTime` parameters
-- 🐛 Fixed `zero_position()` causing unwanted movement
-- ✨ Added `stop()` method for emergency stop
-- 🎯 Simplified API for real-time applications
-- 📝 User now controls timing with `update()` loop
-
-### v4.3 (Previous)
-- Settling time logic for step commands
-- Feedforward torque support
-- Blocking control with duration parameter
-- Automatic position settling verification
-
-### v4.2
-- Basic trajectory control
-- Context manager support
-- Simple tolerance checking
-
----
-
-**Happy Controlling! 🚀**
-
-*Now with non-blocking design for real-time control!*
+MIT License
