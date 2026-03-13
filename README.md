@@ -23,29 +23,10 @@ v4.3 대비 주요 변경사항:
 
 ## Installation
 
-### Prerequisites
-
-```bash
-pip install TMotorCANControl
-sudo apt-get install can-utils  # Linux
-```
-
-### Sudo 권한 설정 (권장)
-
-CAN 인터페이스 자동 설정을 위해:
-
-```bash
-sudo visudo
-# 아래 줄 추가:
-your_username ALL=(ALL) NOPASSWD: /sbin/ip
-```
-
-### TMotorAPI 설치
-
 ```bash
 git clone https://github.com/KR70004526/TMotorAPI.git
 cd TMotorAPI
-cp src/TMotorAPI.py your_project/
+python -m pip install -e .
 ```
 
 ---
@@ -91,16 +72,41 @@ config = MotorConfig(
     maxTemperature=50.0,       # 최대 MOSFET 온도, °C (기본값: 50.0)
     defaultKp=10.0,            # 기본 위치 게인, Nm/rad (기본값: 10.0)
     defaultKd=0.5,             # 기본 속도 게인, Nm/(rad/s) (기본값: 0.5)
-    canBackend='socketcan',    # CAN 백엔드: 'socketcan', 'socketcan_native', 'gs_usb' (기본값: 'socketcan')
-    canChannel='can0',         # socketcan → 'can0' 등 문자열 | gs_usb → 0 등 정수 (기본값: 'can0')
+    canBackend='socketcan',    # CAN 백엔드 (기본값: 'socketcan')
+    canChannel='can0',         # CAN 채널 (기본값: 'can0')
 )
 ```
 
+**`canBackend` — CAN 통신 백엔드 선택**
+
+| 값 | OS | 설명 |
+|---|---|---|
+| `'socketcan'` | Linux | Linux 커널 SocketCAN 사용. `canChannel`은 `'can0'`, `'can1'` 등 문자열 |
+| `'socketcan_native'` | Linux | SocketCAN native 모드. `canChannel` 형식은 `'socketcan'`과 동일 |
+| `'gs_usb'` | Windows / Linux | USB-CAN 어댑터(CANable, canable pro 등) 사용. `canChannel`은 정수(`0`, `1` 등) |
+
+Linux 환경에서는 일반적으로 `'socketcan'`을 사용하며, Windows 환경에서는 `'gs_usb'` 백엔드를 사용해야 한다.  
+`gs_usb` 백엔드를 사용할 경우 `python-can`의 gs_usb 드라이버가 필요하며, `canChannel`은 USB 디바이스 인덱스(정수)를 지정한다.
+
+```python
+# Linux 예시
+config = MotorConfig(canBackend='socketcan', canChannel='can0')
+
+# Windows 예시 (USB-CAN 어댑터)
+config = MotorConfig(canBackend='gs_usb', canChannel=0)
+```
+
+**`canInterface` — Linux SocketCAN 인터페이스 이름**
+
+`canInterface`는 `CANInterface.setup_interface()`에서 Linux의 `ip link set` 명령을 통해 CAN 인터페이스를 초기화할 때 사용된다.  
+이 파라미터는 **Linux SocketCAN 환경에서만 의미가 있으며**, Windows나 `gs_usb` 백엔드 사용 시에는 `ip link` 명령이 실행되지 않으므로 무시된다.  
+값은 `'can0'`, `'can1'` 등 `can\d+` 패턴의 문자열이어야 하며, 패턴에 맞지 않는 이름은 CAN bring-up이 건너뛰어진다.
+
 **Validation (`__post_init__`)**:
 - `motorId`는 0~127 범위여야 함
-- `canBackend`가 `socketcan` 또는 `socketcan_native`이면 `canChannel`은 `'can0'` 형식의 문자열이어야 함
-- `canBackend`가 `gs_usb`이면 `canChannel`은 정수여야 함
-- 지원하지 않는 `canBackend`는 `ValueError` 발생
+- `canBackend`가 `'socketcan'` 또는 `'socketcan_native'`이면 `canChannel`은 `'can0'` 형식의 문자열이어야 함
+- `canBackend`가 `'gs_usb'`이면 `canChannel`은 정수여야 함
+- 지원하지 않는 `canBackend` 값은 `ValueError` 발생
 
 ---
 
