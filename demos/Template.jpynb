@@ -1,0 +1,116 @@
+from TMotorAPI import Motor, MotorConfig
+import time
+import threading
+import math
+import ctypes
+
+# ── Windows 타이머 해상도 1ms로 설정 ──────────────────────────
+winmm = ctypes.WinDLL('winmm')
+winmm.timeBeginPeriod(1)
+
+# ── 모터 설정 ─────────────────────────────────────────────────
+cfg = MotorConfig(
+    motorType="AK45-36",
+    motorId=2,
+    canBackend="gs_usb",
+    canChannel=0,
+    bitrate=1_000_000,
+    maxTemperature=80,
+    autoInit=False,
+)
+motor = Motor(config=cfg)
+motor.enable()
+motor.zero_position()   # 현재 위치를 강제로 고정하므로 수동으로 조작 시
+                        # motor.update() 이후에 motor.set_torque(0) 입력
+
+# ── 컨트롤 루프 설정 ──────────────────────────────────────────
+TARGET_HZ    = 500
+PERIOD       = 1.0 / TARGET_HZ
+BUSYWAIT_THR = 0.001
+
+# ── 공유 상태 ─────────────────────────────────────────────────
+stop_event = threading.Event()
+state_lock = threading.Lock()
+shared = {"pos": 0.0, "vel": 0.0, "tor": 0.0, "hz": 0.0, "misses": 0}
+
+# ── 상태 출력 ─────────────────────────────────────────────────
+def status_printer():
+    while not stop_event.is_set():
+        with state_lock:
+            s = shared.copy()
+        print(
+            f"Pos: {math.degrees(s['pos']):7.2f}°  "
+            f"Vel: {s['vel']:6.3f} rad/s  "
+            f"Tor: {s['tor']:6.3f} Nm  "
+            f"Loop: {s['hz']:5.1f} Hz  "
+            f"Miss: {s['misses']}"
+        )
+        time.sleep(0.2)
+
+threading.Thread(target=status_printer, daemon=True).start()
+
+# ── 정밀 슬립 ─────────────────────────────────────────────────
+def precise_sleep_until(target: float):
+    remaining = target - time.perf_counter()
+    if remaining > BUSYWAIT_THR:
+        time.sleep(remaining - BUSYWAIT_THR)
+    while time.perf_counter() < target:
+        pass
+
+# ── 메인 제어 루프 ────────────────────────────────────────────
+try:
+    print(f"[INFO] 모터 테스트 ({TARGET_HZ} Hz)")
+    last_time = time.perf_counter()
+    next_time = last_time
+    misses = 0
+
+    while not stop_event.is_set():
+        now = time.perf_counter()
+        dt = now - last_time
+        last_time = now
+
+        motor.update()
+
+        ##################################
+
+        # Position Control (with Feedforward Torque)
+        # pos_cmd = math.radians(90) # Degree
+        # motor.set_position(pos_cmd, kp=0.5, kd=0.2, feedTor=0.0)
+
+        # Velocity Control
+        # vel_cmd = math.radians(360) # Degree / s
+        # motor.set_velocity(vel_cmd, kd=0.2)
+
+        # Torque Control
+        tau_cmd = 3.00
+        motor.set_torque(tau_cmd)
+
+        ##################################
+
+        with state_lock:
+            shared.update({
+                "pos": motor.position,
+                "vel": motor.velocity,
+                "tor": motor.torque,                
+                "hz": 1.0 / dt if dt > 0 else 0.0,
+                "misses": misses,
+            })
+
+        next_time += PERIOD
+        slack = next_time - time.perf_counter()
+        if slack > 0:
+            precise_sleep_until(next_time)
+        else:
+            misses += 1
+
+except KeyboardInterrupt:
+    print("\n[INFO] 종료 중...")
+
+finally:
+    stop_event.set()
+    time.sleep(0.3)
+    motor.set_torque(0.0)
+    motor.update()
+    motor.disable()
+    winmm.timeEndPeriod(1)
+    print("[INFO] 완료")
