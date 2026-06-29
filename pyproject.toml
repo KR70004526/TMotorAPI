@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "TMotorAPI"
-version = "0.1.1"
+version = "0.1.2"
 description = "High-level TMotor control API for TMotorCANControl with CubeMars T-Motor"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -14,5 +14,6 @@ dependencies = [
 ]
 authors = [{name = "KR70004526"}]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["TMotorAPI"]
