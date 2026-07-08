@@ -14,6 +14,8 @@ dependencies = [
 ]
 authors = [{name = "KR70004526"}]
 
+# TMotorAPI 는 src/TMotorAPI.py 단일 flat 모듈. packages.find 로는 안 잡혀
+# 정규/github(pip install git+...) 설치 시 빈 wheel 이 됐음 → py-modules 로 명시.
 [tool.setuptools]
 package-dir = {"" = "src"}
 py-modules = ["TMotorAPI"]

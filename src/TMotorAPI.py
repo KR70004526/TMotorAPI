@@ -239,7 +239,11 @@ class Motor:
         self._lastVelocity = 0.0
         self._lastTorque = 0.0
         self._lastTemperature = 0.0
-        
+        self._lastCurrent = 0.0          # q-axis current (A)
+        self._lastAcceleration = 0.0     # output acceleration (rad/s^2)
+        self._lastError = 0              # motor error code
+        self._lastControlMode = "IDLE"   # _TMotorManState name
+
         # Soft limit parameters (internal only)
         self._softLimitMin: Optional[float] = None
         self._softLimitMax: Optional[float] = None
@@ -295,7 +299,27 @@ class Motor:
     def temperature(self) -> float:
         """Current MOSFET temperature (°C)"""
         return self._lastTemperature
-    
+
+    @property
+    def current(self) -> float:
+        """Current q-axis current (A)"""
+        return self._lastCurrent
+
+    @property
+    def acceleration(self) -> float:
+        """Current output acceleration (rad/s^2)"""
+        return self._lastAcceleration
+
+    @property
+    def error(self) -> int:
+        """Latest motor error code (0 = OK)"""
+        return self._lastError
+
+    @property
+    def control_mode(self) -> str:
+        """Current control state (IDLE/IMPEDANCE/CURRENT/SPEED/FULL_STATE)"""
+        return self._lastControlMode
+
     # ==================== Power Control ====================
     def enable(self) -> None:
         """Enable motor (Power ON)"""
@@ -350,12 +374,20 @@ class Motor:
         self._lastVelocity = self._manager.velocity
         self._lastTorque = self._manager.torque
         self._lastTemperature = self._manager.get_temperature_celsius()
-        
+        self._lastCurrent = self._manager.get_current_qaxis_amps()
+        self._lastAcceleration = self._manager.get_output_acceleration_radians_per_second_squared()
+        self._lastError = self._manager.get_motor_error_code()
+        self._lastControlMode = self._manager._control_state.name
+
         return {
             'position': self._lastPosition,
             'velocity': self._lastVelocity,
             'torque': self._lastTorque,
-            'temperature': self._lastTemperature
+            'temperature': self._lastTemperature,
+            'current': self._lastCurrent,
+            'acceleration': self._lastAcceleration,
+            'error': self._lastError,
+            'control_mode': self._lastControlMode,
         }
     
     # ==================== Soft Limit Methods ====================
@@ -506,7 +538,42 @@ class Motor:
         
         self._manager.set_speed_gains(kd=kd)
         self._manager.velocity = targetVel
-    
+
+    def set_fullState(self,
+                      targetPos: float = 0.0,
+                      targetVel: float = 0.0,
+                      kp: float = 0.0,
+                      kd: Optional[float] = None,
+                      feedTor: float = 0.0) -> None:
+        """
+        Full-state MIT command (non-blocking).
+
+        Sends position + velocity feedback with feedforward torque in ONE command:
+            tau = kp*(targetPos - p) + kd*(targetVel - v) + feedTor
+        Superset of set_position (no velocity term) and set_velocity (no
+        feedforward). With kp=0 this is velocity damping toward targetVel plus a
+        feedforward torque -- e.g. an ergometer resistance (feedTor) that also
+        regulates cadence (kd, targetVel), computed in motor firmware.
+
+        Args:
+            targetPos: Target position (rad). Ignored when kp=0.
+            targetVel: Target velocity (rad/s).
+            kp: Position gain / stiffness (Nm/rad). 0 = no position hold.
+            kd: Velocity gain / damping (Nm/(rad/s)). None -> config.defaultKd.
+            feedTor: Feedforward torque (Nm).
+
+        Note: kp/kd/targetVel/targetPos are range-checked by the driver per motor
+        type (e.g. AK80-64: Kd 0..5, V +-8 rad/s). Out-of-range raises.
+        """
+        if not self._isEnabled or self._manager is None:
+            raise RuntimeError("Motor not enabled")
+        if kd is None:
+            kd = self.config.defaultKd
+        self._manager.set_impedance_gains_real_unit_full_state_feedback(K=kp, B=kd)
+        self._manager.position = targetPos
+        self._manager.velocity = targetVel
+        self._manager.torque = feedTor
+
     def set_torque(self, targetTor: float) -> None:
         """
         Set torque command (non-blocking)
