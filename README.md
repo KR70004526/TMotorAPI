@@ -15,7 +15,7 @@
 
 ## 📖 개요
 
-[TMotorCANControl](https://github.com/neurobionics/TMotorCANControl)(Neurobionics Lab) 위에 얹은 얇은 래퍼. **논블로킹 제어**와 **소프트 리밋** 제공
+[TMotorCANControl](https://github.com/neurobionics/TMotorCANControl)(Neurobionics Lab) 기반 얇은 래퍼. **논블로킹 제어**와 **소프트 리밋** 제공
 
 | | 특징 |
 |---|------|
