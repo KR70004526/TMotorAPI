@@ -1,27 +1,44 @@
-# TMotorAPI
+<div align="center">
 
-CubeMars T-Motor(AK 시리즈)용 고수준 제어 API. [TMotorCANControl](https://github.com/neurobionics/TMotorCANControl)(Neurobionics Lab) 위에 얹은 얇은 래퍼로, **논블로킹 제어**와 **소프트 리밋**을 제공한다.
+# 🔧 TMotorAPI
 
-- MIT 모드 기반 위치 / 속도 / 토크 / 풀스테이트 제어
-- 논블로킹 설계 — 명령은 즉시 반환, 실제 통신은 `update()`에서 처리
-- 소프트 리밋 — 한계 근처에서 댐핑을 자동으로 키워 부드럽게 정지
-- Linux(socketcan) / Windows(gs_usb) 백엔드 지원
+**CubeMars T-Motor(AK 시리즈)용 고수준 제어 API**
+
+[![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](#-라이선스)
+[![CAN](https://img.shields.io/badge/CAN-socketcan%20%7C%20gs__usb-orange.svg)](#-motorconfig)
+[![Based on](https://img.shields.io/badge/based%20on-TMotorCANControl-lightgrey.svg)](https://github.com/neurobionics/TMotorCANControl)
+
+</div>
 
 ---
 
-## 설치
+## 📖 개요
+
+[TMotorCANControl](https://github.com/neurobionics/TMotorCANControl)(Neurobionics Lab) 위에 얹은 얇은 래퍼. **논블로킹 제어**와 **소프트 리밋** 제공
+
+| | 특징 |
+|---|------|
+| ⚙️ | MIT 모드 기반 위치 / 속도 / 토크 / 풀스테이트 제어 |
+| ⚡ | 논블로킹 설계 — 명령 즉시 반환, 실제 통신은 `update()`에서 처리 |
+| 🛡️ | 소프트 리밋 — 한계 근처 댐핑 자동 증가로 부드러운 정지 |
+| 🖥️ | Linux(socketcan) / Windows(gs_usb) 백엔드 지원 |
+
+---
+
+## 📦 설치
 
 ```bash
 pip install git+https://github.com/KR70004526/TMotorAPI.git
 ```
 
-- Python >= 3.8
-- 의존성: `python-can>=4.6`, `TMotorCANControl`(gs_usb 지원 포크가 자동 설치됨)
-- Windows에서 gs_usb를 쓰려면 CANable 등 gs_usb 호환 어댑터 필요
+- **Python** >= 3.8
+- **자동 설치 의존성** — `python-can`, `gs_usb`, `pyusb`, `libusb-package`, `TMotorCANControl`(gs_usb 지원 포크)
+- **Windows** — CANable 등 gs_usb 호환 어댑터 필요
 
 ---
 
-## 빠른 시작
+## 🚀 빠른 시작
 
 ```python
 from TMotorAPI import Motor, MotorConfig
@@ -45,11 +62,11 @@ with Motor(config=cfg) as motor:      # enter 시 enable, exit 시 disable
         time.sleep(0.002)             # 500 Hz 루프
 ```
 
-> 핵심 루프: 매 주기마다 `set_*()`로 명령을 걸고 `update()`를 호출해야 실제로 CAN 통신이 일어난다.
+> ⚠️ **핵심 루프** — 매 주기마다 `set_*()`로 명령 후 `update()` 호출 필수. 그래야 실제 CAN 통신 발생
 
 ---
 
-## MotorConfig
+## ⚙️ MotorConfig
 
 | 필드 | 기본값 | 설명 |
 |------|--------|------|
@@ -62,11 +79,11 @@ with Motor(config=cfg) as motor:      # enter 시 enable, exit 시 disable
 | `canChannel` | `'can0'` | socketcan은 `'can0'` 문자열, gs_usb는 `0` 정수 |
 | `autoInit` | `True` | 시작 시 CAN 인터페이스 자동 up (Linux 전용) |
 
-백엔드와 채널 타입은 생성 시 검증된다 — socketcan은 `'canN'` 문자열, gs_usb는 정수만 허용.
+> 생성 시 백엔드·채널 타입 검증. socketcan은 `'canN'` 문자열, gs_usb는 정수만 허용
 
 ---
 
-## 제어 메서드 (논블로킹)
+## 🎮 제어 메서드 (논블로킹)
 
 | 메서드 | 설명 |
 |--------|------|
@@ -79,19 +96,19 @@ with Motor(config=cfg) as motor:      # enter 시 enable, exit 시 disable
 | `zero_position()` | 현재 위치를 0으로 (엔코더 리셋, EEPROM 저장 ~1초) |
 | `update()` | 명령 송신 + 상태 수신 (매 루프 호출) |
 
-각도 단위는 rad, 속도 rad/s, 토크 Nm.
+> 단위 — 위치 rad, 속도 rad/s, 토크 Nm
 
-## 상태 조회 (property)
+### 📊 상태 조회 (property)
 
-`position`, `velocity`, `torque`, `temperature`, `current`(q축 전류 A), `acceleration`, `error`(0=정상), `control_mode`
+`position` · `velocity` · `torque` · `temperature` · `current`(q축 전류 A) · `acceleration` · `error`(0=정상) · `control_mode`
 
-`update()`가 반환하는 dict로도 동일 값을 한 번에 받을 수 있다.
+> `update()` 반환 dict로도 동일 값 일괄 수신 가능
 
 ---
 
-## 소프트 리밋
+## 🛡️ 소프트 리밋
 
-한계 위치 근처에서 댐핑(kd)을 자동으로 키워 벽처럼 부드럽게 멈춘다.
+한계 위치 근처에서 댐핑(kd) 자동 증가. 벽처럼 부드럽게 정지
 
 ```python
 motor.set_soft_limit(-1.57, 1.57)     # -90° ~ +90°
@@ -101,31 +118,33 @@ while True:
     time.sleep(0.01)
 ```
 
-`set_soft_limit(min, max, soft_zone=0.2, base_kd=2.0, max_kd=20.0)` — `soft_zone` 안으로 들어오면 `base_kd`에서 `max_kd`까지 선형 증가.
+> `set_soft_limit(min, max, soft_zone=0.2, base_kd=2.0, max_kd=20.0)` — `soft_zone` 진입 시 `base_kd`에서 `max_kd`까지 선형 증가
 
 ---
 
-## 궤적 생성 (TrajectoryGenerator)
+## 📈 궤적 생성 (TrajectoryGenerator)
 
-목표까지의 `(위치, 속도)`를 시간에 따라 계산하는 정적 유틸.
+목표까지의 `(위치, 속도)`를 시간에 따라 계산하는 정적 유틸
 
 ```python
 from TMotorAPI import TrajectoryGenerator as Traj
 pos, vel = Traj.minimum_jerk(start, end, t, duration)
 ```
 
-- `minimum_jerk` — 5차 다항식 (jerk 최소)
-- `cubic` — 3차 다항식
-- `linear` — 선형 보간
+| 메서드 | 방식 |
+|--------|------|
+| `minimum_jerk` | 5차 다항식 (jerk 최소) |
+| `cubic` | 3차 다항식 |
+| `linear` | 선형 보간 |
 
 ---
 
-## 예제
+## 📁 예제
 
-`demos/TEMPLATE.ipynb` — 500 Hz 제어 루프, 별도 스레드 상태 출력, Windows 1ms 타이머 해상도, 정밀 슬립 포함 실전 템플릿.
+`demos/TEMPLATE.ipynb` — 500 Hz 제어 루프, 별도 스레드 상태 출력, Windows 1ms 타이머 해상도, 정밀 슬립 포함 실전 템플릿
 
 ---
 
-## 라이선스
+## 📄 라이선스
 
 MIT
