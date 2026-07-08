@@ -1,5 +1,5 @@
 """
-TMotor Control API v5.1 - Non-blocking Control with Soft Limit
+TMotor Control API v5.0 - Non-blocking Control with Soft Limit
 Based on TMotorCANControl by Neurobionics Lab
 
 Changes from v4.3:
@@ -8,7 +8,6 @@ Changes from v4.3:
 - Fixed zero_position() causing unwanted movement
 - Added stop() method for emergency stop
 - Added soft limit feature with smooth stopping (v5.0)
-- Auto-register bundled libusb-1.0 DLL for Windows gs_usb backend (v5.1)
 
 Author: TMotor Control Team
 License: MIT
@@ -23,28 +22,6 @@ import re
 from typing import Optional, Dict, Tuple
 from dataclasses import dataclass
 import numpy as np
-
-# ==================== libusb backend bootstrap (Windows / gs_usb) ====================
-# gs_usb (gs_usb/gs_usb.py) talks to the adapter through pyusb's default libusb1
-# backend: usb.backend.libusb1.get_backend(), which locates libusb-1.0.dll via
-# find_library() -> PATH. The libusb-package wheel ships that DLL but does NOT put
-# it on PATH, so on a fresh env get_backend() returns None and GsUsb.scan() finds
-# nothing (silently, no error). Register the bundled DLL directory here at import
-# time so gs_usb works out of the box without any manual DLL copying.
-try:
-    import libusb_package
-    _libusb_dir = os.path.dirname(str(libusb_package.get_library_path()))
-    if _libusb_dir:
-        if _libusb_dir not in os.environ.get("PATH", "").split(os.pathsep):
-            os.environ["PATH"] = _libusb_dir + os.pathsep + os.environ.get("PATH", "")
-        if hasattr(os, "add_dll_directory"):
-            try:
-                os.add_dll_directory(_libusb_dir)
-            except (OSError, ValueError):
-                pass
-except Exception:
-    # libusb-package absent (e.g. Linux/socketcan) -> nothing to register
-    pass
 
 try:
     from TMotorCANControl.mit_can import TMotorManager_mit_can
