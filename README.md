@@ -2,43 +2,45 @@
 
 # 🔧 TMotorAPI
 
-**CubeMars T-Motor(AK 시리즈)용 고수준 제어 API**
+**High-level control API for CubeMars T-Motor (AK series)**
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](#-라이선스)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](#-license)
 [![CAN](https://img.shields.io/badge/CAN-socketcan%20%7C%20gs__usb-orange.svg)](#-motorconfig)
 [![Based on](https://img.shields.io/badge/based%20on-TMotorCANControl-lightgrey.svg)](https://github.com/neurobionics/TMotorCANControl)
+
+🇺🇸 English · [🇰🇷 한국어](README-KR.md)
 
 </div>
 
 ---
 
-## 📖 개요
+## 📖 Overview
 
-[TMotorCANControl](https://github.com/neurobionics/TMotorCANControl)(Neurobionics Lab) 기반 얇은 래퍼. **논블로킹 제어**와 **소프트 리밋** 제공
+A thin wrapper over [TMotorCANControl](https://github.com/neurobionics/TMotorCANControl) (Neurobionics Lab), adding **non-blocking control** and a **soft limit**.
 
-| | 특징 |
+| | Feature |
 |---|------|
-| ⚙️ | MIT 모드 기반 위치 / 속도 / 토크 / 풀스테이트 제어 |
-| ⚡ | 논블로킹 설계 — 명령 즉시 반환, 실제 통신은 `update()`에서 처리 |
-| 🛡️ | 소프트 리밋 — 한계 근처 댐핑 자동 증가로 부드러운 정지 |
-| 🖥️ | Linux(socketcan) / Windows(gs_usb) 백엔드 지원 |
+| ⚙️ | MIT-mode position / velocity / torque / full-state control |
+| ⚡ | Non-blocking design — commands return instantly, actual bus I/O runs in `update()` |
+| 🛡️ | Soft limit — damping ramps up near the bounds for a smooth stop |
+| 🖥️ | Linux (socketcan) / Windows (gs_usb) backend support |
 
 ---
 
-## 📦 설치
+## 📦 Installation
 
 ```bash
 pip install git+https://github.com/KR70004526/TMotorAPI.git
 ```
 
 - **Python** >= 3.8
-- **자동 설치 의존성** — `python-can`, `gs_usb`, `pyusb`, `libusb-package`, `TMotorCANControl`(gs_usb 지원 포크)
-- **Windows** — CANable 등 gs_usb 호환 어댑터 필요
+- **Auto-installed deps** — `python-can`, `gs_usb`, `pyusb`, `libusb-package`, `TMotorCANControl` (gs_usb-enabled fork)
+- **Windows** — requires a gs_usb-compatible adapter (e.g. CANable)
 
 ---
 
-## 🚀 빠른 시작
+## 🚀 Quick start
 
 ```python
 from TMotorAPI import Motor, MotorConfig
@@ -51,100 +53,100 @@ cfg = MotorConfig(
     canChannel=0,          # Linux: "can0"
     bitrate=1_000_000,
     maxTemperature=80,
-    autoInit=False,        # Windows는 False (ip link 불필요)
+    autoInit=False,        # False on Windows (no ip link needed)
 )
 
-with Motor(config=cfg) as motor:      # enter 시 enable, exit 시 disable
-    motor.zero_position()             # 현재 위치를 0으로
+with Motor(config=cfg) as motor:      # enable on enter, disable on exit
+    motor.zero_position()             # set current position to 0
     while True:
-        motor.update()                # 상태 수신 + 명령 송신
-        motor.set_torque(1.0)         # 예: 1 Nm 토크
-        time.sleep(0.002)             # 500 Hz 루프
+        motor.update()                # receive state + send command
+        motor.set_torque(1.0)         # e.g. 1 Nm torque
+        time.sleep(0.002)             # 500 Hz loop
 ```
 
-> ⚠️ **핵심 루프** — 매 주기마다 `set_*()`로 명령 후 `update()` 호출 필수. 그래야 실제 CAN 통신 발생
+> ⚠️ **Control loop** — every cycle, issue a `set_*()` command then call `update()`. Only then does the actual CAN transfer happen.
 
 ---
 
 ## ⚙️ MotorConfig
 
-| 필드 | 기본값 | 설명 |
+| Field | Default | Description |
 |------|--------|------|
-| `motorType` | `'AK70-10'` | 모터 모델 (`AK80-64`, `AK80-9` 등) |
+| `motorType` | `'AK70-10'` | Motor model (`AK80-64`, `AK80-9`, …) |
 | `motorId` | `1` | CAN ID (0–127) |
-| `bitrate` | `1000000` | CAN 비트레이트 |
-| `maxTemperature` | `50.0` | MOSFET 안전 온도 상한(°C) |
-| `defaultKp` / `defaultKd` | `10.0` / `0.5` | 기본 위치/속도 게인 |
-| `canBackend` | `'socketcan'` | `socketcan`(Linux) 또는 `gs_usb`(Windows) |
-| `canChannel` | `'can0'` | socketcan은 `'can0'` 문자열, gs_usb는 `0` 정수 |
-| `autoInit` | `True` | 시작 시 CAN 인터페이스 자동 up (Linux 전용) |
+| `bitrate` | `1000000` | CAN bitrate |
+| `maxTemperature` | `50.0` | Safe MOSFET temperature limit (°C) |
+| `defaultKp` / `defaultKd` | `10.0` / `0.5` | Default position / velocity gains |
+| `canBackend` | `'socketcan'` | `socketcan` (Linux) or `gs_usb` (Windows) |
+| `canChannel` | `'can0'` | `'can0'` string for socketcan, `0` int for gs_usb |
+| `autoInit` | `True` | Auto bring-up of the CAN interface at startup (Linux only) |
 
-> 생성 시 백엔드·채널 타입 검증. socketcan은 `'canN'` 문자열, gs_usb는 정수만 허용
+> Backend and channel type are validated on construction — socketcan needs a `'canN'` string, gs_usb needs an integer.
 
 ---
 
-## 🎮 제어 메서드 (논블로킹)
+## 🎮 Control methods (non-blocking)
 
-| 메서드 | 설명 |
+| Method | Description |
 |--------|------|
-| `set_position(pos, kp, kd, feedTor)` | 위치 제어 |
-| `set_velocity(vel, kd)` | 속도 제어 |
-| `set_torque(tor)` | 토크 제어 |
-| `set_fullState(pos, vel, kp, kd, feedTor)` | MIT 풀스테이트: `tau = kp·(pos−p) + kd·(vel−v) + feedTor` |
-| `set_position_smooth(pos, ...)` | 소프트 리밋 적용 위치 제어 |
-| `stop()` | 비상 정지 (토크 0) |
-| `zero_position()` | 현재 위치를 0으로 (엔코더 리셋, EEPROM 저장 ~1초) |
-| `update()` | 명령 송신 + 상태 수신 (매 루프 호출) |
+| `set_position(pos, kp, kd, feedTor)` | Position control |
+| `set_velocity(vel, kd)` | Velocity control |
+| `set_torque(tor)` | Torque control |
+| `set_fullState(pos, vel, kp, kd, feedTor)` | MIT full-state: `tau = kp·(pos−p) + kd·(vel−v) + feedTor` |
+| `set_position_smooth(pos, ...)` | Position control with soft limit applied |
+| `stop()` | Emergency stop (torque 0) |
+| `zero_position()` | Set current position to 0 (encoder reset, ~1 s EEPROM save) |
+| `update()` | Send command + receive state (call every loop) |
 
-> 단위 — 위치 rad, 속도 rad/s, 토크 Nm
+> Units — position rad, velocity rad/s, torque Nm
 
-### 📊 상태 조회 (property)
+### 📊 State readouts (properties)
 
-`position` · `velocity` · `torque` · `temperature` · `current`(q축 전류 A) · `acceleration` · `error`(0=정상) · `control_mode`
+`position` · `velocity` · `torque` · `temperature` · `current` (q-axis current, A) · `acceleration` · `error` (0 = OK) · `control_mode`
 
-> `update()` 반환 dict로도 동일 값 일괄 수신 가능
+> The dict returned by `update()` carries the same values in one shot.
 
 ---
 
-## 🛡️ 소프트 리밋
+## 🛡️ Soft limit
 
-한계 위치 근처에서 댐핑(kd) 자동 증가. 벽처럼 부드럽게 정지
+Damping (kd) ramps up automatically near the bounds, stopping like a soft wall.
 
 ```python
 motor.set_soft_limit(-1.57, 1.57)     # -90° ~ +90°
 while True:
-    motor.set_position_smooth(target) # 리밋 밖이면 자동 클램프
+    motor.set_position_smooth(target) # clamped if outside the limit
     motor.update()
     time.sleep(0.01)
 ```
 
-> `set_soft_limit(min, max, soft_zone=0.2, base_kd=2.0, max_kd=20.0)` — `soft_zone` 진입 시 `base_kd`에서 `max_kd`까지 선형 증가
+> `set_soft_limit(min, max, soft_zone=0.2, base_kd=2.0, max_kd=20.0)` — inside `soft_zone`, kd grows linearly from `base_kd` to `max_kd`.
 
 ---
 
-## 📈 궤적 생성 (TrajectoryGenerator)
+## 📈 Trajectory generation (TrajectoryGenerator)
 
-목표까지의 `(위치, 속도)`를 시간에 따라 계산하는 정적 유틸
+Static helpers that compute `(position, velocity)` toward a target over time.
 
 ```python
 from TMotorAPI import TrajectoryGenerator as Traj
 pos, vel = Traj.minimum_jerk(start, end, t, duration)
 ```
 
-| 메서드 | 방식 |
+| Method | Type |
 |--------|------|
-| `minimum_jerk` | 5차 다항식 (jerk 최소) |
-| `cubic` | 3차 다항식 |
-| `linear` | 선형 보간 |
+| `minimum_jerk` | 5th-order polynomial (minimum jerk) |
+| `cubic` | 3rd-order polynomial |
+| `linear` | Linear interpolation |
 
 ---
 
-## 📁 예제
+## 📁 Example
 
-`demos/TEMPLATE.ipynb` — 500 Hz 제어 루프, 별도 스레드 상태 출력, Windows 1ms 타이머 해상도, 정밀 슬립 포함 실전 템플릿
+`demos/TEMPLATE.ipynb` — a real-world template with a 500 Hz control loop, status printing on a separate thread, Windows 1 ms timer resolution, and precise sleep.
 
 ---
 
-## 📄 라이선스
+## 📄 License
 
 MIT
