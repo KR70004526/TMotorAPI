@@ -9,7 +9,10 @@ description = "High-level TMotor control API for TMotorCANControl with CubeMars 
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-  "python-can>=4.6",
+  "python-can[gs_usb]>=4.6",
+  "gs_usb>=0.3",
+  "pyusb>=1.2",
+  "libusb-package>=1.0",   # Windows용 libusb-1.0 네이티브 바이너리 번들
   "TMotorCANControl @ git+https://github.com/KR70004526/TMotorCANControl.git@windows-gs-usb"
 ]
 authors = [{name = "KR70004526"}]
