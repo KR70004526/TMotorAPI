@@ -25,6 +25,7 @@ A thin wrapper over [TMotorCANControl](https://github.com/neurobionics/TMotorCAN
 | ⚡ | Non-blocking design — commands return instantly, actual bus I/O runs in `update()` |
 | 🛡️ | Soft limit — damping ramps up near the bounds for a smooth stop |
 | 🖥️ | Linux (socketcan) / Windows (gs_usb) backend support |
+| 🔀 | Driver **v2 / v3** protocol select via `driverVersion` (v3 = CubeMars AK driver v3.x) |
 
 ---
 
@@ -80,8 +81,44 @@ with Motor(config=cfg) as motor:      # enable on enter, disable on exit
 | `canBackend` | `'socketcan'` | `socketcan` (Linux) or `gs_usb` (Windows) |
 | `canChannel` | `'can0'` | `'can0'` string for socketcan, `0` int for gs_usb |
 | `autoInit` | `True` | Auto bring-up of the CAN interface at startup (Linux only) |
+| `driverVersion` | `'v2'` | `'v2'` classic MIT (existing) or `'v3'` for CubeMars AK **driver v3.x** boards |
 
 > Backend and channel type are validated on construction — socketcan needs a `'canN'` string, gs_usb needs an integer.
+
+---
+
+## 🔀 Driver version (v2 / v3)
+
+`MotorConfig.driverVersion` picks the CAN wire protocol. Default `"v2"` — **existing behavior, unchanged**. v3 is **opt-in**: leave `driverVersion` untouched and everything runs exactly as before.
+
+| Value | Protocol | For |
+|-------|----------|-----|
+| `"v2"` *(default)* | Classic MIT (standard 11-bit frame) | AK driver v2.x boards |
+| `"v3"` | Extended MIT (29-bit frame) | CubeMars AK **driver v3.x** boards |
+
+```python
+cfg = MotorConfig(
+    motorType="AK10-9",
+    motorId=1,
+    canBackend="gs_usb", canChannel=0,
+    driverVersion="v3",     # ← enables AK driver v3 protocol
+    autoInit=False,
+)
+with Motor(config=cfg) as motor:
+    motor.zero_position()
+    motor.set_position(0.3)
+    motor.update()
+```
+
+**Supported v3 motors** (from the AK driver v3 manual §4.2):
+
+`AK10-9` · `AK60-6` · `AK60-39` · `AK70-9` · `AK80-8` · `AK80-9` · `AKE60-8` · `AKE80-8` · `AKE90-8` · `AKH70-16` · `AKH70-48`
+
+- ✅ **AK10-9** — hardware-verified (connect / zero / position control / disable)
+- ⚠️ The other 10 use official manual spec values (**not yet hardware-tested**)
+- A motor **not** in this list raises `KeyError` under v3 — add its parameters to `MIT_Params_v3` in `TMotorAPI.py`
+
+> Under the hood v3 differs from v2 at the wire level: extended 29-bit frame, `Set Origin` zeroing (manual §4.1.6), `Motor Disable` stop (§4.1.8). All handled internally — the high-level API (soft limit, trajectory, non-blocking) works the same for both versions.
 
 ---
 
