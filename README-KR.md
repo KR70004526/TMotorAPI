@@ -25,6 +25,7 @@
 | ⚡ | 논블로킹 설계 — 명령 즉시 반환, 실제 통신은 `update()`에서 처리 |
 | 🛡️ | 소프트 리밋 — 한계 근처 댐핑 자동 증가로 부드러운 정지 |
 | 🖥️ | Linux(socketcan) / Windows(gs_usb) 백엔드 지원 |
+| 🔀 | 드라이버 **v2 / v3** 프로토콜을 `driverVersion`으로 선택 (v3 = CubeMars AK driver v3.x) |
 
 ---
 
@@ -80,8 +81,44 @@ with Motor(config=cfg) as motor:      # enter 시 enable, exit 시 disable
 | `canBackend` | `'socketcan'` | `socketcan`(Linux) 또는 `gs_usb`(Windows) |
 | `canChannel` | `'can0'` | socketcan은 `'can0'` 문자열, gs_usb는 `0` 정수 |
 | `autoInit` | `True` | 시작 시 CAN 인터페이스 자동 up (Linux 전용) |
+| `driverVersion` | `'v2'` | `'v2'` 클래식 MIT(기존) 또는 `'v3'` CubeMars AK **driver v3.x** 보드용 |
 
 > 생성 시 백엔드·채널 타입 검증. socketcan은 `'canN'` 문자열, gs_usb는 정수만 허용
+
+---
+
+## 🔀 드라이버 버전 (v2 / v3)
+
+`MotorConfig.driverVersion`으로 CAN 통신 프로토콜을 고른다. 기본값 `"v2"` — **기존 동작 그대로**. v3는 **명시적 선택(opt-in)**: `driverVersion`을 건드리지 않으면 예전과 100% 동일하게 동작한다.
+
+| 값 | 프로토콜 | 대상 |
+|----|----------|------|
+| `"v2"` *(기본)* | 클래식 MIT (표준 11-bit 프레임) | AK driver v2.x 보드 |
+| `"v3"` | 확장 MIT (29-bit 프레임) | CubeMars AK **driver v3.x** 보드 |
+
+```python
+cfg = MotorConfig(
+    motorType="AK10-9",
+    motorId=1,
+    canBackend="gs_usb", canChannel=0,
+    driverVersion="v3",     # ← AK driver v3 프로토콜 활성화
+    autoInit=False,
+)
+with Motor(config=cfg) as motor:
+    motor.zero_position()
+    motor.set_position(0.3)
+    motor.update()
+```
+
+**v3 지원 모터** (AK driver v3 매뉴얼 §4.2):
+
+`AK10-9` · `AK60-6` · `AK60-39` · `AK70-9` · `AK80-8` · `AK80-9` · `AKE60-8` · `AKE80-8` · `AKE90-8` · `AKH70-16` · `AKH70-48`
+
+- ✅ **AK10-9** — 하드웨어 실측 검증 완료 (연결 / 영점 / 위치제어 / 종료)
+- ⚠️ 나머지 10종은 매뉴얼 공식 스펙값 사용 (**아직 하드웨어 미검증**)
+- 목록에 **없는** 모터로 v3를 쓰면 `KeyError` 발생 — `TMotorAPI.py`의 `MIT_Params_v3`에 파라미터 한 줄 추가하면 됨
+
+> v3는 v2와 와이어 레벨에서 다르다: 확장 29-bit 프레임, `Set Origin` 영점(매뉴얼 §4.1.6), `Motor Disable` 종료(§4.1.8). 전부 내부에서 처리되므로 고수준 API(소프트 리밋·궤적·논블로킹)는 두 버전에서 동일하게 동작한다.
 
 ---
 
